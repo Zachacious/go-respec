@@ -5,11 +5,11 @@ import (
 	"go/token"
 	"strconv"
 
-	"github.com/Zachacious/go-respec/internal/builder"
+	"github.com/Zachacious/go-respec/respec"
 )
 
-func (a *Analyzer) parseBuilderChain(call *ast.CallExpr) *builder.Builder {
-	b := builder.NewBuilder()
+func (a *Analyzer) parseBuilderChain(call *ast.CallExpr) *respec.Builder {
+	b := respec.NewBuilder()
 	currentCall := call
 
 	for {

@@ -1,5 +1,5 @@
 // Package builder contains the source for the user-facing respec library.
-package builder
+package respec
 
 import "github.com/getkin/kin-openapi/openapi3"
 

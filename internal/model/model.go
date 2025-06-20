@@ -3,7 +3,7 @@ package model
 import (
 	"go/types"
 
-	"github.com/Zachacious/go-respec/internal/builder"
+	"github.com/Zachacious/go-respec/respec"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -34,7 +34,7 @@ type Operation struct {
 	GoHandler      types.Object
 
 	// ADDED: To hold metadata from the fluent builder
-	BuilderMetadata *builder.Builder
+	BuilderMetadata *respec.Builder
 
 	Spec *openapi3.Operation
 }
