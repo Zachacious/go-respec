@@ -1,0 +1,34 @@
+# .respec.yaml
+
+info:
+  title: "My Production API"
+  version: "2.0.0"
+
+# Define all the security schemes your API uses
+securitySchemes:
+  BearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+
+# NEW: Define what a "router" is in your project
+routerDefinitions:
+  # Chi V5 (built-in default)
+  - type: "*github.com/go-chi/chi/v5.Mux"
+    endpointMethods:
+      ["Get", "Post", "Put", "Patch", "Delete", "Head", "Options"]
+    groupMethods: ["Route", "Group"]
+    middlewareWrapperMethods: ["With"]
+
+  # Gin (built-in default)
+  - type: "*github.com/gin-gonic/gin.Engine"
+    endpointMethods:
+      ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    groupMethods: ["Group"]
+    middlewareWrapperMethods: [] # Gin doesn't typically chain this way
+
+  # Add your custom router here
+  - type: "*github.com/my-corp/custom-router.Router"
+    endpointMethods: ["AddHandler"]
+    groupMethods: ["Subrouter"]
+    middlewareWrapperMethods: ["WithMiddleware"]
