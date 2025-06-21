@@ -9,20 +9,15 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-var httpMethods = map[string]bool{
-	"Get":    true,
-	"Post":   true,
-	"Put":    true,
-	"Delete": true,
-	"Patch":  true,
-	"Head":   true,
-}
-
 var pathParamRegex = regexp.MustCompile(`{([^}]+)}|:(\w+)`)
 
-// processRouteCall is the main dispatcher. It's called when we find a method call on a router we're tracking.
+var httpMethods = map[string]bool{
+	"Get": true, "Post": true, "Put": true, "Delete": true, "Patch": true, "Head": true,
+}
+
 func (a *Analyzer) processRouteCall(tracker *stateTracker, parentNode *model.RouteNode, call *ast.CallExpr, sel *ast.SelectorExpr, builderCall *ast.CallExpr) {
 	methodName := sel.Sel.Name
+	// This logic needs to be enhanced by the router definitions from config
 	if httpMethods[methodName] {
 		a.parseEndpoint(parentNode, call, methodName, builderCall)
 	} else if methodName == "Route" || methodName == "Group" {
@@ -30,7 +25,6 @@ func (a *Analyzer) processRouteCall(tracker *stateTracker, parentNode *model.Rou
 	}
 }
 
-// parseEndpoint handles a terminal route registration like r.Get("/users", GetUsers)
 func (a *Analyzer) parseEndpoint(node *model.RouteNode, call *ast.CallExpr, httpMethod string, builderCall *ast.CallExpr) {
 	if len(call.Args) < 2 {
 		return
@@ -54,14 +48,12 @@ func (a *Analyzer) parseEndpoint(node *model.RouteNode, call *ast.CallExpr, http
 		Spec:           openapi3.NewOperation(),
 	}
 
-	// FEAT: Infer Path Parameters from URL string
 	matches := pathParamRegex.FindAllStringSubmatch(path, -1)
 	for _, match := range matches {
-		paramName := match[1] // For {id} style
+		paramName := match[1]
 		if paramName == "" {
-			paramName = match[2] // For :id style
+			paramName = match[2]
 		}
-
 		param := openapi3.NewPathParameter(paramName).
 			WithSchema(openapi3.NewStringSchema())
 		op.Spec.AddParameter(param)
@@ -74,7 +66,6 @@ func (a *Analyzer) parseEndpoint(node *model.RouteNode, call *ast.CallExpr, http
 	node.Operations = append(node.Operations, op)
 }
 
-// parseGroup handles a grouping function like r.Route("/v1", func(r chi.Router) { ... })
 func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode, call *ast.CallExpr, builderCall *ast.CallExpr) {
 	if len(call.Args) < 2 {
 		return
@@ -89,31 +80,30 @@ func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode
 		PathPrefix: pathPrefix,
 		Parent:     parentNode,
 	}
-	if builderCall != nil {
-		// We can attach builder metadata to groups as well if we extend the model
-	}
 	parentNode.Children = append(parentNode.Children, groupNode)
 
 	if len(funcLit.Type.Params.List) > 0 {
 		subRouterIdent := funcLit.Type.Params.List[0].Names[0]
-		subRouterObj := a.fileTypeInfo[a.currentFile].Defs[subRouterIdent]
+		subRouterObj := a.getObjectForExpr(subRouterIdent)
 		if subRouterObj != nil {
 			tracker.trackedRouters[subRouterObj] = groupNode
 			groupNode.GoVar = subRouterObj
-			ast.Inspect(funcLit.Body, a.buildASTVisitor(tracker, groupNode))
+			// FIX: Correctly call buildASTVisitor with only one argument.
+			ast.Inspect(funcLit.Body, a.buildASTVisitor(tracker))
 			delete(tracker.trackedRouters, subRouterObj)
 		}
 	}
 }
 
-// buildFullPath walks up the RouteGraph to construct the full path for an endpoint.
 func buildFullPath(node *model.RouteNode, suffix string) string {
 	if node == nil {
 		return suffix
 	}
-	// A simple join logic, needs to be more robust to handle slashes.
+	path := ""
 	if node.PathPrefix != "" {
-		return buildFullPath(node.Parent, node.PathPrefix+suffix)
+		path = node.PathPrefix + suffix
+	} else {
+		path = suffix
 	}
-	return buildFullPath(node.Parent, suffix)
+	return buildFullPath(node.Parent, path)
 }

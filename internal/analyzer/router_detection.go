@@ -32,22 +32,20 @@ func (a *Analyzer) isRouterInitialization(call *ast.CallExpr) bool {
 }
 
 // findAssignStmt looks for the variable assignment for a router initialization.
-func (a *Analyzer) findAssignStmt(file *ast.File, call *ast.CallExpr) (*ast.AssignStmt, types.Object) {
-	var as *ast.AssignStmt
-	var obj types.Object
+func (a *Analyzer) findAssignStmt(file *ast.File, call *ast.CallExpr) types.Object {
+	var assignedObj types.Object
 	ast.Inspect(file, func(n ast.Node) bool {
 		if assign, ok := n.(*ast.AssignStmt); ok {
 			if len(assign.Rhs) == 1 && assign.Rhs[0] == call {
-				as = assign
 				if len(assign.Lhs) > 0 {
-					obj = a.getObjectForExpr(assign.Lhs[0])
+					assignedObj = a.getObjectForExpr(assign.Lhs[0])
 				}
-				return false
+				return false // Stop searching once found
 			}
 		}
 		return true
 	})
-	return as, obj
+	return assignedObj
 }
 
 // Helper to get type info for an expression
