@@ -11,13 +11,11 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// stateTracker holds the analysis state during traversal.
 type stateTracker struct {
 	routeGraph     *model.RouteNode
 	trackedRouters map[types.Object]*model.RouteNode
 }
 
-// Analyzer holds the state for a single analysis run.
 type Analyzer struct {
 	projectPath  string
 	pkgs         []*packages.Package
@@ -26,7 +24,6 @@ type Analyzer struct {
 	routerDefs   []config.RouterDefinition
 }
 
-// New creates and initializes a new Analyzer for the given project path.
 func New(projectPath string, config *config.Config) (*Analyzer, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
@@ -40,7 +37,6 @@ func New(projectPath string, config *config.Config) (*Analyzer, error) {
 	if packages.PrintErrors(pkgs) > 0 {
 		return nil, fmt.Errorf("packages contain errors")
 	}
-
 	fileInfoMap := make(map[*ast.File]*types.Info)
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
@@ -55,25 +51,21 @@ func New(projectPath string, config *config.Config) (*Analyzer, error) {
 	}, nil
 }
 
-// Analyze performs the full analysis of the loaded packages using a single unified pass.
 func (a *Analyzer) Analyze() (*model.APIModel, error) {
 	fmt.Println("Analyzer is now building the route graph...")
 	tracker := &stateTracker{
 		routeGraph:     &model.RouteNode{},
 		trackedRouters: make(map[types.Object]*model.RouteNode),
 	}
-
 	for _, pkg := range a.pkgs {
 		for _, file := range pkg.Syntax {
 			a.currentFile = file
 			ast.Inspect(file, a.buildASTVisitor(tracker))
 		}
 	}
-
 	fmt.Println("Route graph built. Analyzing handlers to infer schemas...")
 	sg := NewSchemaGenerator()
 	a.traverseAndAnalyzeHandlers(tracker.routeGraph, sg)
-
 	apiModel := &model.APIModel{
 		RouteGraph: tracker.routeGraph,
 	}
@@ -84,7 +76,6 @@ func (a *Analyzer) Analyze() (*model.APIModel, error) {
 	return apiModel, nil
 }
 
-// buildASTVisitor returns the main visitor function for the single analysis pass.
 func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool {
 	return func(n ast.Node) bool {
 		callExpr, ok := n.(*ast.CallExpr)
@@ -106,34 +97,46 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 			return true
 		}
 
-		if _, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
-			a.analyzeCallChain(tracker, callExpr)
+		if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+			// Trace the receiver of this call all the way back up the chain.
+			if parentNode := a.traceReceiverToNode(tracker, selExpr.X); parentNode != nil {
+				// We found a chain that ends in a tracked router. Process the call.
+				a.processRouteCall(tracker, parentNode, callExpr, selExpr, nil)
+			}
 		}
 		return true
 	}
 }
 
-func (a *Analyzer) analyzeCallChain(tracker *stateTracker, call *ast.CallExpr) {
-	selExpr, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return
-	}
-	receiverExpr := selExpr.X
-	receiverObj := a.getObjectForExpr(receiverExpr)
-
-	if receiverObj != nil {
-		if node, ok := tracker.trackedRouters[receiverObj]; ok {
-			a.processRouteCall(tracker, node, call, selExpr, nil)
-			return
+// traceReceiverToNode recursively traces a chain of method calls (e.g., r.With(...).With(...))
+// until it finds the original tracked router variable, returning its corresponding RouteNode.
+func (a *Analyzer) traceReceiverToNode(tracker *stateTracker, expr ast.Expr) *model.RouteNode {
+	// Base Case: The expression is a simple variable identifier.
+	if ident, ok := expr.(*ast.Ident); ok {
+		if obj := a.getObjectForExpr(ident); obj != nil {
+			if node, ok := tracker.trackedRouters[obj]; ok {
+				return node
+			}
 		}
 	}
 
-	if nextCall, ok := receiverExpr.(*ast.CallExpr); ok {
-		a.analyzeCallChain(tracker, nextCall)
+	// Recursive Case: The expression is another method call.
+	if call, ok := expr.(*ast.CallExpr); ok {
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return nil
+		}
+
+		// Check if this method is a middleware wrapper that returns a new router.
+		receiverType := a.getTypeFromExpr(sel.X)
+		if a.getRouteMethodType(receiverType, sel.Sel.Name) == "middleware" {
+			// It is. Continue tracing from ITS receiver (the 'r' in 'r.With(...)').
+			return a.traceReceiverToNode(tracker, sel.X)
+		}
 	}
+	return nil
 }
 
-// traverseAndAnalyzeHandlers is a recursive function to walk the graph and analyze each operation.
 func (a *Analyzer) traverseAndAnalyzeHandlers(node *model.RouteNode, sg *SchemaGenerator) {
 	if node == nil {
 		return

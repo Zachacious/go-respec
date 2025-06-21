@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Zachacious/go-respec/internal/model"
+	"github.com/Zachacious/go-respec/respec"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -46,6 +48,7 @@ func (a *Analyzer) parseEndpoint(node *model.RouteNode, call *ast.CallExpr, http
 
 	handlerObj := a.getObjectForExpr(call.Args[1])
 	if handlerObj == nil {
+		fmt.Printf("Warning: Could not resolve handler for route %s\n", path)
 		return
 	}
 
@@ -79,13 +82,15 @@ func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode
 	var funcLit *ast.FuncLit
 
 	// Handle both r.Route("/prefix", func) and pathless r.Group(func)
-	if pathLit, ok := call.Args[0].(*ast.BasicLit); ok {
-		pathPrefix, _ = a.getStringFromExpr(pathLit)
-		if len(call.Args) > 1 {
-			funcLit, _ = call.Args[1].(*ast.FuncLit)
+	if len(call.Args) > 0 {
+		if pathLit, ok := call.Args[0].(*ast.BasicLit); ok {
+			pathPrefix, _ = a.getStringFromExpr(pathLit)
+			if len(call.Args) > 1 {
+				funcLit, _ = call.Args[1].(*ast.FuncLit)
+			}
+		} else {
+			funcLit, _ = call.Args[0].(*ast.FuncLit)
 		}
-	} else {
-		funcLit, _ = call.Args[0].(*ast.FuncLit)
 	}
 	if funcLit == nil {
 		return
@@ -110,8 +115,12 @@ func buildFullPath(node *model.RouteNode, suffix string) string {
 	path := suffix
 	for n := node; n != nil; n = n.Parent {
 		if n.PathPrefix != "" {
-			// A simple join logic, needs to be more robust to handle slashes.
-			path = n.PathPrefix + path
+			// This logic needs to be smarter about joining slashes
+			newPath := n.PathPrefix + path
+			if !strings.HasSuffix(n.PathPrefix, "/") && !strings.HasPrefix(path, "/") {
+				newPath = n.PathPrefix + "/" + path
+			}
+			path = newPath
 		}
 	}
 	return path
@@ -127,4 +136,37 @@ func (a *Analyzer) getStringFromExpr(expr ast.Expr) (string, bool) {
 		return "", false
 	}
 	return s, true
+}
+
+func (a *Analyzer) parseBuilderChain(call *ast.CallExpr) *respec.Builder {
+	b := respec.NewBuilder()
+	currentCall := call
+
+	for {
+		selExpr, ok := currentCall.Fun.(*ast.SelectorExpr)
+		if !ok {
+			break
+		}
+		methodName := selExpr.Sel.Name
+
+		if len(currentCall.Args) > 0 {
+			switch methodName {
+			case "Summary":
+				if summary, ok := a.getStringFromExpr(currentCall.Args[0]); ok {
+					b.Summary(summary)
+				}
+			case "Description":
+				if desc, ok := a.getStringFromExpr(currentCall.Args[0]); ok {
+					b.Description(desc)
+				}
+			}
+		}
+
+		if nextCall, ok := selExpr.X.(*ast.CallExpr); ok {
+			currentCall = nextCall
+		} else {
+			break
+		}
+	}
+	return b
 }
