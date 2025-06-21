@@ -1,65 +1,71 @@
 package analyzer
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Zachacious/go-respec/internal/model"
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // buildRouteFromCall is the entry point for Phase 4. It's called by the data
 // flow engine when a route registration method call (a "sink") is found.
-func (s *State) buildRouteFromCall(item WorklistItem, call *ast.CallExpr) {
+func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
 
-	// 1. Determine HTTP Method
 	httpMethod := strings.ToUpper(selExpr.Sel.Name)
-
-	// 2. Resolve URL Path from the first argument
 	if len(call.Args) < 2 {
-		return // Not a valid route call (needs at least path and handler)
+		return
 	}
+
 	pathArg := call.Args[0]
 	path, ok := s.resolveStringValue(pathArg)
 	if !ok {
-		fmt.Printf("  [Warning] Could not statically resolve path for call at %v\n", pathArg.Pos())
 		return
 	}
 
-	// 2.5. Assemble the full path by walking the parent chain
-	fullPath := s.assembleFullPath(item.Value, path)
+	// Assemble the full path and normalize it
+	fullPath := s.assembleFullPath(val, path)
+	// FIX: Remove trailing slash if it's not the root path
+	if len(fullPath) > 1 && strings.HasSuffix(fullPath, "/") {
+		fullPath = fullPath[:len(fullPath)-1]
+	}
 
-	// 3. Resolve Handler Function from the second argument
 	handlerArg := call.Args[1]
 	handlerObj := s.getObjectForExpr(handlerArg)
 	if handlerObj == nil {
-		fmt.Printf("  [Warning] Could not resolve handler function for call at %v\n", handlerArg.Pos())
 		return
 	}
 
-	// 4. Create and add the Operation to the model
 	op := &model.Operation{
-		HTTPMethod:  httpMethod,
-		FullPath:    fullPath, // Use the fully assembled path
-		GoHandler:   handlerObj,
-		HandlerName: handlerObj.Name(),
+		HTTPMethod: httpMethod, FullPath: fullPath, GoHandler: handlerObj, HandlerName: handlerObj.Name(),
 	}
 	if handlerObj.Pkg() != nil {
 		op.HandlerPackage = handlerObj.Pkg().Path()
 	}
 
-	// Attach the operation to the correct node in the graph.
-	routeNode := item.Value.Node
+	// This is now an operation on a specific node.
+	routeNode := val.Node
 	routeNode.Operations = append(routeNode.Operations, op)
 
-	fmt.Printf("      [Route] Created operation: %s %s -> %s\n", op.HTTPMethod, op.FullPath, op.HandlerName)
+	// --- NEW: Auto-detect path parameters ---
+	op.Spec = openapi3.NewOperation() // Init the spec object
+	re := regexp.MustCompile(`\{(\w+)\}`)
+	matches := re.FindAllStringSubmatch(fullPath, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			paramName := match[1]
+			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
+			op.Spec.AddParameter(param)
+		}
+	}
 }
 
 // resolveStringValue attempts to find the static string value of an expression.

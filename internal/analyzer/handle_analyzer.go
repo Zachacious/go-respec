@@ -28,23 +28,27 @@ func (s *State) traverseAndAnalyze(node *model.RouteNode) {
 
 // analyzeHandlerBody finds the AST for a handler and inspects its body.
 func (s *State) analyzeHandlerBody(op *model.Operation) {
-	// Look up the handler's function declaration in our universe.
+	if op.Spec == nil {
+		op.Spec = openapi3.NewOperation()
+	}
+	// NOTE: openapi3.NewOperation() initializes the Responses field, so we don't use make().
+
 	funcDecl, ok := s.Universe.Functions[op.GoHandler]
-	if !ok || funcDecl.Body == nil {
-		return // Can't analyze this handler
+	if !ok {
+		op.Spec.Summary = op.HandlerName
+		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
+		return
 	}
 
-	fmt.Printf("  [Analyze] Analyzing handler '%s'\n", op.HandlerName)
-
-	op.Spec = openapi3.NewOperation()
-
-	// FIX: Correctly use the ParsedComment struct you provided.
 	if funcDecl.Doc != nil {
 		if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
 			op.Spec.Summary = parsedComment.Summary
 			op.Spec.Description = parsedComment.Description
 			op.Spec.Tags = parsedComment.Tags
 		}
+	}
+	if op.Spec.Summary == "" {
+		op.Spec.Summary = op.HandlerName
 	}
 
 	reqType := s.findRequestSchema(funcDecl.Body)
@@ -62,8 +66,12 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		response := openapi3.NewResponse().WithDescription("Success").WithContent(
 			openapi3.NewContentWithJSONSchemaRef(schemaRef),
 		)
-		// FIX: Use the idiomatic AddResponse method on the Operation.
 		op.Spec.AddResponse(statusCode, response)
+	}
+
+	// FIX: Use the .Map() method to check the length of the responses.
+	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
+		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
 	}
 }
 

@@ -22,27 +22,24 @@ func NewSchemaGenerator() *SchemaGenerator {
 }
 
 // GenerateSchema is the main entry point for creating a schema from a Go type.
-// It returns a reference to the schema, which will be placed in the components section.
 func (sg *SchemaGenerator) GenerateSchema(t types.Type) *openapi3.SchemaRef {
-	// If we've seen this type before, return the cached reference.
+	// FIX: For basic types, return the schema directly, not a reference.
+	if _, ok := t.Underlying().(*types.Basic); ok {
+		return &openapi3.SchemaRef{Value: sg.buildSchema(t)}
+	}
+
 	if ref, ok := sg.schemas[t]; ok {
 		return ref
 	}
 
-	// For named types (like structs), use the type's name. For others, generate a name.
 	typeName := t.String()
 	if named, ok := t.(*types.Named); ok {
 		typeName = named.Obj().Name()
 	}
 
-	// Create a preliminary reference. This is crucial for handling recursive types.
-	// We add it to the cache *before* processing to break cycles.
 	schemaRef := &openapi3.SchemaRef{Ref: "#/components/schemas/" + typeName}
 	sg.schemas[t] = schemaRef
-
-	// Now, actually build the schema that the reference points to.
-	schema := sg.buildSchema(t)
-	schemaRef.Value = schema
+	schemaRef.Value = sg.buildSchema(t)
 
 	return schemaRef
 }

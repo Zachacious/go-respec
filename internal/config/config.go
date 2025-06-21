@@ -28,11 +28,24 @@ type Config struct {
 func Load(projectPath string) (*Config, error) {
 	// Start with a robust set of default configurations.
 	cfg := &Config{
-		Info:              &openapi3.Info{Title: "API Documentation", Version: "1.0.0"},
+		Info: &openapi3.Info{Title: "API Documentation", Version: "1.0.0"},
+		// --- START OF FIX ---
+		// Provide the actual default router definitions.
 		RouterDefinitions: []RouterDefinition{
-			// ... default router definitions are unchanged
+			{
+				Type:                     "github.com/go-chi/chi/v5.Mux",
+				EndpointMethods:          []string{"Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"},
+				GroupMethods:             []string{"Route", "Group"},
+				MiddlewareWrapperMethods: []string{"With"},
+			},
+			{
+				Type:                     "github.com/gin-gonic/gin.Engine",
+				EndpointMethods:          []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+				GroupMethods:             []string{"Group"},
+				MiddlewareWrapperMethods: []string{},
+			},
 		},
-		// FIX: Initialize the generic map.
+		// --- END OF FIX ---
 		SecuritySchemes: make(map[string]interface{}),
 	}
 
