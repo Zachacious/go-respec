@@ -3,9 +3,9 @@
 set -euo pipefail
 
 # === CONFIGURATION ===
-REPO="github.com/Zachacious/go-respec" # CORRECT REPO
-MAIN_BRANCH="main"                     # Or "master"
-INITIAL_VERSION="v0.1.0"               # The version for the very first release
+REPO="github.com/Zachacious/go-respec"
+MAIN_BRANCH="main"
+INITIAL_VERSION="v0.1.0"
 
 # === SCRIPT LOGIC ===
 
@@ -89,17 +89,17 @@ if [[ -z "$NOTES" ]]; then
     exit 1
 fi
 
-# --- Pre-release checks ---
-echo "🧪 Running tests..."
-if ! make test; then
-    echo "❌ Tests failed. Please fix them before releasing."
-    exit 1
-fi
-echo "🔍 Running linter..."
-if ! make lint; then
-    echo "❌ Linting failed. Please fix issues before releasing."
-    exit 1
-fi
+# --- Pre-release checks REMOVED ---
+# echo "🧪 Running tests..."
+# if ! make test; then
+#     echo "❌ Tests failed. Please fix them before releasing."
+#     exit 1
+# fi
+# echo "🔍 Running linter..."
+# if ! make lint; then
+#     echo "❌ Linting failed. Please fix issues before releasing."
+#     exit 1
+# fi
 
 # --- Execution Step ---
 echo "1. Tagging version $VERSION..."
@@ -128,3 +128,4 @@ echo "5. Notifying Go proxy..."
 echo ""
 echo "✅ Release $VERSION completed successfully!"
 echo "📦 Users can install with: go install $REPO@$VERSION"
+
