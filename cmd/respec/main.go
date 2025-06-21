@@ -31,6 +31,7 @@ framework-agnostic and highly configurable through a .respec.yaml file.`,
 		// FIX: Allow 0 or 1 arguments.
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+
 			// FIX: Default to the current directory if no path is provided.
 			projectPath := "."
 			if len(args) > 0 {

@@ -11,19 +11,50 @@ import (
 
 // BuildSpec constructs the final openapi3.T document from the analyzed API model.
 func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error) {
-	// 1. Initialize the specification correctly.
+	// FIX: Initialize the spec using a struct literal, as NewT() does not exist.
+	// Also initialize nested pointer fields to prevent nil pointer issues.
 	spec := &openapi3.T{
 		OpenAPI: "3.0.3",
 		Info:    cfg.Info,
 		Components: &openapi3.Components{
-			Schemas:         apiModel.Components.Schemas,
-			SecuritySchemes: cfg.SecuritySchemes,
+			Schemas:         make(openapi3.Schemas),
+			SecuritySchemes: make(openapi3.SecuritySchemes),
 		},
-		// Initialize the Paths struct.
 		Paths: &openapi3.Paths{},
 	}
 
-	// 2. Recursively traverse the route graph to populate the paths.
+	// Populate the initialized fields from the analysis and config.
+	spec.Components.Schemas = apiModel.Components.Schemas
+
+	// Manually construct valid SecurityScheme objects from the generic map.
+	sanitizedSchemes := make(openapi3.SecuritySchemes)
+	if cfg.SecuritySchemes != nil {
+		for key, val := range cfg.SecuritySchemes {
+			schemeMap, ok := val.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			scheme := &openapi3.SecurityScheme{}
+			if t, ok := schemeMap["type"].(string); ok {
+				scheme.Type = t
+			}
+			if d, ok := schemeMap["description"].(string); ok {
+				scheme.Description = d
+			}
+			if s, ok := schemeMap["scheme"].(string); ok {
+				scheme.Scheme = s
+			}
+			if bf, ok := schemeMap["bearerFormat"].(string); ok {
+				scheme.BearerFormat = bf
+			}
+
+			sanitizedSchemes[key] = &openapi3.SecuritySchemeRef{Value: scheme}
+		}
+	}
+	spec.Components.SecuritySchemes = sanitizedSchemes
+
+	// Recursively traverse the route graph to populate the paths.
 	fmt.Println("Assembling specification from route graph...")
 	addRoutesToSpec(spec, apiModel.RouteGraph)
 
