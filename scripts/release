@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-# FIX: Change to the project root directory (parent of the scripts dir)
-# This makes all subsequent paths and commands work regardless of where the script is called from.
-cd "$(dirname "$0")/.."
-
 # === CONFIGURATION ===
 REPO="github.com/Zachacious/go-respec"
 MAIN_BRANCH="main"
@@ -31,16 +27,9 @@ if ! GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"; then
     echo "❌ Git Error: Failed to pull from origin. Please ensure your git credentials are configured correctly."
     exit 1
 fi
-
-echo "🔄 Pushing '$MAIN_BRANCH' to origin to ensure it is up-to-date..."
-if ! GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"; then
-    echo "❌ Git Error: Failed to push to origin. Please check your permissions and credentials."
-    exit 1
-fi
-
-echo "🔄 Fetching and pruning all tags from the 'origin' remote..."
-if ! GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags; then
-    echo "❌ Git Error: Failed to fetch and prune tags. Please ensure your git credentials are configured correctly."
+echo "🔄 Fetching all tags from the 'origin' remote..."
+if ! GIT_TERMINAL_PROMPT=0 git fetch origin --tags --force; then
+    echo "❌ Git Error: Failed to fetch tags. Please ensure your git credentials are configured correctly."
     exit 1
 fi
 
@@ -100,6 +89,18 @@ if [[ -z "$NOTES" ]]; then
     exit 1
 fi
 
+# --- Pre-release checks REMOVED ---
+# echo "🧪 Running tests..."
+# if ! make test; then
+#     echo "❌ Tests failed. Please fix them before releasing."
+#     exit 1
+# fi
+# echo "🔍 Running linter..."
+# if ! make lint; then
+#     echo "❌ Linting failed. Please fix issues before releasing."
+#     exit 1
+# fi
+
 # --- Execution Step ---
 echo "1. Tagging version $VERSION..."
 git tag -a "$VERSION" -m "Release $VERSION"
@@ -115,8 +116,7 @@ echo "3. Building release artifacts using 'make'..."
 make release
 
 echo "4. Creating GitHub Release..."
-# The `dist/*` glob now works correctly because we are in the project root.
-gh release create "$VERSION" dist/* \
+gh release create "$VERSION" ../dist/* \
     --title "respec $VERSION" \
     --notes "$NOTES"
 
@@ -128,3 +128,4 @@ echo "5. Notifying Go proxy..."
 echo ""
 echo "✅ Release $VERSION completed successfully!"
 echo "📦 Users can install with: go install $REPO@$VERSION"
+
