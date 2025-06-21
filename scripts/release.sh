@@ -60,20 +60,19 @@ if [[ -z "$VERSION" ]]; then
     if [[ -n "$LATEST_TAG_RAW" ]]; then
         LATEST_TAG=$(echo "$LATEST_TAG_RAW" | tr -d '[:space:]')
         echo "🔍 Latest tag found: $LATEST_TAG"
-        
-        # FIX: Replaced regex matching with more robust string parsing to avoid shell incompatibilities.
-        # Remove the leading 'v'
-        VERSION_PART="${LATEST_TAG#v}"
-        
-        # Set the Internal Field Separator to '.' and use `read` to parse the version.
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_PART"
 
-        # Validate that the components are numeric.
-        if ! [[ "$MAJOR" =~ ^[0-9]+$ && "$MINOR" =~ ^[0-9]+$ && "$PATCH" =~ ^[0-9]+$ ]]; then
+        # FIX: Replaced complex regex and read with a more portable `cut`-based approach.
+        VERSION_PART="${LATEST_TAG#v}"
+        MAJOR=$(echo "$VERSION_PART" | cut -d. -f1)
+        MINOR=$(echo "$VERSION_PART" | cut -d. -f2)
+        PATCH=$(echo "$VERSION_PART" | cut -d. -f3)
+
+        # Use a simple validation check that is more portable.
+        if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
             echo "❌ Invalid latest tag format: '$LATEST_TAG'. Could not parse into vX.Y.Z format."
             exit 1
         fi
-        
+
         case "$BUMP" in
             major) ((MAJOR++)); MINOR=0; PATCH=0 ;;
             minor) ((MINOR++)); PATCH=0 ;;
