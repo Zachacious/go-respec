@@ -116,7 +116,7 @@ echo "3. Building release artifacts using 'make'..."
 make release
 
 echo "4. Creating GitHub Release..."
-gh release create "$VERSION" ../dist/* \
+gh release create "$VERSION" dist/* \
     --title "respec $VERSION" \
     --notes "$NOTES"
 

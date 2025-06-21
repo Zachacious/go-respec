@@ -60,7 +60,7 @@ $(DIST)/$(BINARY)-%:
 	@platform="$*"; \
 	os=$${platform%-*}; arch=$${platform#*-}; \
 	outfile="$(DIST)/$(BINARY)-$$os-$$arch"; \
-	[ "$$os" = "windows" ] && outfile="$$outfile.exe"; \
+	if [ "$$os" = "windows" ]; then outfile="$$outfile.exe"; fi; \
 	mkdir -p $(DIST); \
 	echo "--> Building for $$os/$$arch..."; \
 	GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
@@ -68,20 +68,21 @@ $(DIST)/$(BINARY)-%:
 
 # Clean the dist directory
 clean:
-	rm -rf $(DIST)
+	@rm -rf $(DIST)
 
 # The release target builds all platforms, zips the artifacts, and creates a checksum file.
 release: clean all
-	@echo "--> Zipping release artifacts..."; \
-	for platform in $(PLATFORMS); do \
+	@echo "--> Zipping release artifacts...";
+	@for platform in $(PLATFORMS); do \
 		os=$${platform%-*}; arch=$${platform#*-}; \
 		base="$(DIST)/$(BINARY)-$$os-$$arch"; \
-		out="$$base"; [ "$$os" = "windows" ] && out="$$base.exe"; \
+		out="$$base"; \
+		if [ "$$os" = "windows" ]; then out="$$base.exe"; fi; \
 		zipfile="$$base.zip"; \
 		zip -j "$$zipfile" "$$out"; \
 	done
-	@echo "--> Generating checksums..."; \
-	cd $(DIST) && (command -v sha256sum >/dev/null && sha256sum *.zip > SHA256SUMS || shasum -a 256 *.zip > SHA256SUMS)
+	@echo "--> Generating checksums...";
+	@cd $(DIST) && (command -v sha256sum >/dev/null && sha256sum *.zip > SHA256SUMS || shasum -a 256 *.zip > SHA256SUMS)
 
 # Show version info
 version:
@@ -152,4 +153,3 @@ help:
 	@echo "  version    Show version metadata"
 	@echo "  help       Show this help message"
 	@echo ""
-
