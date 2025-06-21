@@ -148,23 +148,23 @@ func (a *Analyzer) checkForResponseBody(op *model.Operation, call *ast.CallExpr,
 	op.Spec.Responses.Set(statusCode, &openapi3.ResponseRef{Value: response})
 }
 
-// findFuncDecl finds the AST node for a given function object.
-func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
-	// This implementation is correct. A more robust version would use position info.
-	for _, pkg := range a.pkgs {
-		for _, file := range pkg.Syntax {
-			obj := file.Scope.Lookup(funcObj.Name())
-			if obj != nil && obj.Pos() == funcObj.Pos() {
-				for _, decl := range file.Decls {
-					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == funcObj.Name() {
-						return fn
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
+// // findFuncDecl finds the AST node for a given function object.
+// func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
+// 	// This implementation is correct. A more robust version would use position info.
+// 	for _, pkg := range a.pkgs {
+// 		for _, file := range pkg.Syntax {
+// 			obj := file.Scope.Lookup(funcObj.Name())
+// 			if obj != nil && obj.Pos() == funcObj.Pos() {
+// 				for _, decl := range file.Decls {
+// 					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == funcObj.Name() {
+// 						return fn
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return nil
+// }
 
 // getTypeFromExpr resolves an expression to its underlying type.
 func (a *Analyzer) getTypeFromExpr(expr ast.Expr) types.Type {

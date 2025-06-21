@@ -95,7 +95,6 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 
 		// Case 1: Is this a router initialization?
 		if a.isRouterInitialization(callExpr) {
-			// FIX: The call site now matches the function signature, expecting one return value.
 			if varObj := a.findAssignStmt(a.currentFile, callExpr); varObj != nil {
 				if _, exists := tracker.trackedRouters[varObj]; !exists {
 					fmt.Printf("Found root router variable '%s'\n", varObj.Name())
@@ -132,4 +131,43 @@ func (a *Analyzer) traverseAndAnalyzeHandlers(node *model.RouteNode, sg *SchemaG
 	for _, child := range node.Children {
 		a.traverseAndAnalyzeHandlers(child, sg)
 	}
+}
+
+// FIX: This function has been rewritten to be more robust. It can now find
+// handler declarations for both top-level functions and methods on structs.
+func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
+	if funcObj == nil || funcObj.Pkg() == nil {
+		return nil
+	}
+
+	// Find the package where the function is defined.
+	var funcPkg *packages.Package
+	for _, p := range a.pkgs {
+		if p.Types == funcObj.Pkg() {
+			funcPkg = p
+			break
+		}
+	}
+	if funcPkg == nil {
+		return nil
+	}
+
+	// Search through the files in that specific package.
+	for _, file := range funcPkg.Syntax {
+		// Look at all top-level declarations in the file.
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+
+			// Get the types.Object for the function we just found in the AST.
+			defObj := funcPkg.TypesInfo.Defs[fn.Name]
+			if defObj == funcObj {
+				// If it matches the handler object we're looking for, we found it.
+				return fn
+			}
+		}
+	}
+	return nil
 }
