@@ -55,7 +55,7 @@ func New(projectPath string, config *config.Config) (*Analyzer, error) {
 	}, nil
 }
 
-// Analyze performs the full analysis of the loaded packages.
+// Analyze performs the full analysis of the loaded packages using a single unified pass.
 func (a *Analyzer) Analyze() (*model.APIModel, error) {
 	fmt.Println("Analyzer is now building the route graph...")
 	tracker := &stateTracker{
@@ -93,7 +93,7 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 			return true
 		}
 
-		// Case 1: Is this a router initialization?
+		// Case 1: Is this a router initialization? (e.g., r := chi.NewRouter())
 		if a.isRouterInitialization(callExpr) {
 			if varObj := a.findAssignStmt(a.currentFile, callExpr); varObj != nil {
 				if _, exists := tracker.trackedRouters[varObj]; !exists {
@@ -108,7 +108,7 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 			return true
 		}
 
-		// Case 2: Is this a method call?
+		// Case 2: Is this a method call? (e.g., r.Route(...))
 		if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
 			if receiverObj := a.getObjectForExpr(selExpr.X); receiverObj != nil {
 				if node, ok := tracker.trackedRouters[receiverObj]; ok {
@@ -133,8 +133,7 @@ func (a *Analyzer) traverseAndAnalyzeHandlers(node *model.RouteNode, sg *SchemaG
 	}
 }
 
-// FIX: This function has been rewritten to be more robust. It can now find
-// handler declarations for both top-level functions and methods on structs.
+// findFuncDecl locates the AST declaration for any function or method.
 func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
 	if funcObj == nil || funcObj.Pkg() == nil {
 		return nil
@@ -154,6 +153,9 @@ func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
 
 	// Search through the files in that specific package.
 	for _, file := range funcPkg.Syntax {
+		if file == nil {
+			continue
+		}
 		// Look at all top-level declarations in the file.
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -161,11 +163,25 @@ func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
 				continue
 			}
 
-			// Get the types.Object for the function we just found in the AST.
-			defObj := funcPkg.TypesInfo.Defs[fn.Name]
-			if defObj == funcObj {
-				// If it matches the handler object we're looking for, we found it.
+			// For regular functions, check if the definition object matches.
+			if funcPkg.TypesInfo.Defs[fn.Name] == funcObj {
 				return fn
+			}
+
+			// For methods, we need to check the receiver type.
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				// Get the type of the receiver (e.g., *myHandlers)
+				recvType := funcPkg.TypesInfo.TypeOf(fn.Recv.List[0].Type)
+				if recvType == nil {
+					continue
+				}
+
+				// Look for the method on this type.
+				if method, _, _ := types.LookupFieldOrMethod(recvType, true, funcObj.Pkg(), funcObj.Name()); method != nil {
+					if method.Pos() == funcObj.Pos() {
+						return fn
+					}
+				}
 			}
 		}
 	}
