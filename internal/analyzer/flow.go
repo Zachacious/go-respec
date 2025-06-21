@@ -97,7 +97,10 @@ func (s *State) traceAssignment(item WorklistItem, assign *ast.AssignStmt) {
 // traceMethodCall handles cases where a method is called on a tracked value.
 func (s *State) traceMethodCall(item WorklistItem, call *ast.CallExpr) {
 	// The item.Node is a SelectorExpr, e.g., `r.Get`
-	selExpr := item.Node.(*ast.SelectorExpr)
+	selExpr, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selExpr.Sel == nil {
+		return
+	}
 	methodName := selExpr.Sel.Name
 	routerDef := item.Value.RouterDef
 
@@ -112,15 +115,17 @@ func (s *State) traceMethodCall(item WorklistItem, call *ast.CallExpr) {
 
 	// Case 2: Is this a chaining method (group or middleware)?
 	isChain := false
-	for _, groupMethod := range routerDef.GroupMethods {
-		if methodName == groupMethod {
+	isGroup := false // Specifically track if it's a grouping method with a path
+	for _, m := range routerDef.GroupMethods {
+		if methodName == m {
 			isChain = true
+			isGroup = true
 			break
 		}
 	}
 	if !isChain {
-		for _, mwMethod := range routerDef.MiddlewareWrapperMethods {
-			if methodName == mwMethod {
+		for _, m := range routerDef.MiddlewareWrapperMethods {
+			if methodName == m {
 				isChain = true
 				break
 			}
@@ -129,40 +134,80 @@ func (s *State) traceMethodCall(item WorklistItem, call *ast.CallExpr) {
 
 	if isChain {
 		fmt.Printf("  [Chain] Found chaining call: %s\n", methodName)
-		// // This call transforms the router. The result of the call is a *new* value to track.
-		// var pathPrefix string
-		// // If it's a group method, try to resolve the path prefix from the first argument.
-		// if len(call.Args) > 0 {
-		// 	// This assumes group methods have the path as the first argument.
-		// 	path, ok := s.resolveStringValue(call.Args[0])
-		// 	if ok {
-		// 		pathPrefix = path
-		// 	}
-		// }
 
-		// This call transforms the router. The result is a new value to track.
-		newParentNode := item.Value.Node                    // The new node is a child of the current one
-		pathPrefix, _ := s.resolveStringValue(call.Args[0]) // Simplified
+		pathPrefix := ""
+		// If it's a group method, try to resolve the path prefix.
+		if isGroup && len(call.Args) > 0 {
+			p, ok := s.resolveStringValue(call.Args[0])
+			if ok {
+				pathPrefix = p
+			}
+		}
 
 		// Create a new graph node for the group
-		newNode := &model.RouteNode{PathPrefix: pathPrefix, Parent: newParentNode}
-		newParentNode.Children = append(newParentNode.Children, newNode)
+		parentNode := item.Value.Node
+		if parentNode == nil {
+			parentNode = s.RouteGraph // Fallback to root if somehow nil
+		}
+		newNode := &model.RouteNode{PathPrefix: pathPrefix, Parent: parentNode}
+		parentNode.Children = append(parentNode.Children, newNode)
 
+		// Create a new tracked value for the result of this call.
 		newVal := &TrackedValue{
 			Source:     call,
 			RouterDef:  routerDef,
 			Parent:     item.Value,
 			PathPrefix: pathPrefix,
-			Node:       newNode, // Associate the new graph node
+			Node:       newNode,
 		}
-
-		// The call expression itself now represents the new trackable value.
 		s.ExprResults[call] = newVal
-		// Add the call expression to the worklist to trace what happens to the new group/router.
+		// Add the call expression to the worklist to trace what happens to the new group/router
+		// This handles `subRouter := r.Group(...)`
 		s.Worklist = append(s.Worklist, WorklistItem{
 			Node:  call,
 			Value: newVal,
 		})
+
+		// --- START OF NEW LOGIC ---
+		// Handle function literal arguments, e.g., r.Route("/path", func(r chi.Router) { ... })
+		for _, arg := range call.Args {
+			funcLit, ok := arg.(*ast.FuncLit)
+			if !ok || funcLit.Type == nil || funcLit.Type.Params == nil || len(funcLit.Type.Params.List) == 0 || funcLit.Body == nil {
+				continue
+			}
+
+			// Get the parameter for the sub-router, e.g., the `r` in `func(r chi.Router)`.
+			paramField := funcLit.Type.Params.List[0]
+			if len(paramField.Names) == 0 {
+				continue
+			}
+
+			paramIdent := paramField.Names[0]
+			info := s.getInfoForNode(paramIdent)
+			paramObj := info.Defs[paramIdent]
+			if paramObj == nil {
+				continue
+			}
+
+			// The parameter inside the function literal now holds our *new* tracked value.
+			fmt.Printf("  [Flow] Tracing into function literal for parameter '%s'\n", paramObj.Name())
+			s.VarValues[paramObj] = newVal
+
+			// Immediately inspect the function literal's body and queue all usages
+			// of this new parameter object.
+			ast.Inspect(funcLit.Body, func(n ast.Node) bool {
+				if ident, ok := n.(*ast.Ident); ok {
+					if usageInfo := s.getInfoForNode(ident); usageInfo != nil && usageInfo.Uses[ident] == paramObj {
+						s.Worklist = append(s.Worklist, WorklistItem{
+							Node:  ident,
+							Value: newVal,
+						})
+					}
+				}
+				return true
+			})
+		}
+		// --- END OF NEW LOGIC ---
 	}
 }
 

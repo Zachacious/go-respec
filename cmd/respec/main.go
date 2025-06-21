@@ -28,9 +28,14 @@ func main() {
 		Long: `respec analyzes a Go project's source code to infer API routes, handlers,
 and schemas, producing a valid OpenAPI v3 specification. It is designed to be
 framework-agnostic and highly configurable through a .respec.yaml file.`,
-		Args: cobra.ExactArgs(1),
+		// FIX: Allow 0 or 1 arguments.
+		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			projectPath := args[0]
+			// FIX: Default to the current directory if no path is provided.
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
 			fmt.Printf("Starting analysis of project at: %s\n", projectPath)
 			cfg, err := config.Load(projectPath)
 			if err != nil {

@@ -24,38 +24,43 @@ type Config struct {
 	RouterDefinitions []RouterDefinition                     `yaml:"routerDefinitions"`
 }
 
-// Load looks for a .respec.yaml file and loads it, providing defaults.
+// Load finds and loads .respec.yaml, merging it with default values.
 func Load(projectPath string) (*Config, error) {
+	// Start with a robust set of default configurations.
+	cfg := &Config{
+		Info: &openapi3.Info{Title: "API Documentation", Version: "1.0.0"},
+		RouterDefinitions: []RouterDefinition{
+			{
+				// Note: Pointer '*' is removed from the type string.
+				Type:                     "github.com/go-chi/chi/v5.Mux",
+				EndpointMethods:          []string{"Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"},
+				GroupMethods:             []string{"Route", "Group"},
+				MiddlewareWrapperMethods: []string{"With"},
+			},
+			{
+				Type:                     "github.com/gin-gonic/gin.Engine",
+				EndpointMethods:          []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+				GroupMethods:             []string{"Group"},
+				MiddlewareWrapperMethods: []string{},
+			},
+		},
+		SecuritySchemes: make(map[string]*openapi3.SecuritySchemeRef),
+	}
+
 	configPath := filepath.Join(projectPath, ".respec.yaml")
 	data, err := os.ReadFile(configPath)
 
-	// If file doesn't exist, create a default config
-	if os.IsNotExist(err) {
-		return &Config{
-			Info: &openapi3.Info{Title: "API Documentation", Version: "1.0.0"},
-			RouterDefinitions: []RouterDefinition{
-				{
-					Type:                     "*github.com/go-chi/chi/v5.Mux",
-					EndpointMethods:          []string{"Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"},
-					GroupMethods:             []string{"Route", "Group"},
-					MiddlewareWrapperMethods: []string{"With"},
-				},
-				{
-					Type:                     "*github.com/gin-gonic/gin.Engine",
-					EndpointMethods:          []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
-					GroupMethods:             []string{"Group"},
-					MiddlewareWrapperMethods: []string{},
-				},
-			},
-		}, nil
-	}
-	if err != nil {
+	// If a config file exists, unmarshal it ON TOP of the defaults.
+	// Fields present in the YAML will overwrite the defaults.
+	// Fields not present in the YAML (like routerDefinitions) will keep their default values.
+	if err == nil {
+		if unmarshalErr := yaml.Unmarshal(data, &cfg); unmarshalErr != nil {
+			return nil, unmarshalErr
+		}
+	} else if !os.IsNotExist(err) {
+		// If there was an error other than the file not existing, return it.
 		return nil, err
 	}
 
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
+	return cfg, nil
 }
