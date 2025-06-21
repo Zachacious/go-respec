@@ -1,158 +1,127 @@
-# Makefile for respec
+#!/usr/bin/env bash
 
-# Metadata
-BINARY      := respec
-# The version is dynamically determined from the latest git tag.
-# --always ensures a version is generated even with no tags.
-# --dirty appends '-dirty' if you have uncommitted changes.
-VERSION     ?= $(shell git describe --tags --always --dirty)
-COMMIT      := $(shell git rev-parse --short HEAD)
-DATE        := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+set -euo pipefail
 
-# Platforms to build for (OS-ARCH)
-PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64
+# === CONFIGURATION ===
+REPO="github.com/Zachacious/go-respec"
+MAIN_BRANCH="main"
+INITIAL_VERSION="v0.1.0"
 
-# Output directory
-DIST := dist
+# === SCRIPT LOGIC ===
 
-# Installation directory
-INSTALL_PREFIX ?= $(HOME)/.local
-INSTALL_DIR := $(INSTALL_PREFIX)/bin
+# --- Initial Health Checks ---
+if ! command -v gh >/dev/null 2>&1; then
+    echo "❌ GitHub CLI (gh) is required but not found. Please install it: https://cli.github.com/"
+    exit 1
+fi
+if ! git diff-index --quiet HEAD --; then
+    echo "❌ Uncommitted changes detected. Please commit or stash them before running a release."
+    git status --short
+    exit 1
+fi
 
-# Go module name from go.mod
-MODULE := $(shell go list -m)
+# --- Git Synchronization ---
+echo "🔄 Switching to '$MAIN_BRANCH' and pulling latest changes..."
+git checkout "$MAIN_BRANCH"
+if ! GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"; then
+    echo "❌ Git Error: Failed to pull from origin. Please ensure your git credentials are configured correctly."
+    exit 1
+fi
 
-# ldflags to inject version info into the binary
-LDFLAGS := -s -w -buildid= -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.date=$(DATE)'
+echo "🔄 Pushing '$MAIN_BRANCH' to origin to ensure it is up-to-date..."
+if ! GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"; then
+    echo "❌ Git Error: Failed to push to origin. Please check your permissions and credentials."
+    exit 1
+fi
 
-.PHONY: all build clean release version install uninstall debug test lint fmt tidy deps
+echo "🔄 Fetching and pruning all tags from the 'origin' remote..."
+if ! GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags; then
+    echo "❌ Git Error: Failed to fetch and prune tags. Please ensure your git credentials are configured correctly."
+    exit 1
+fi
 
-# Default target builds for the current OS/architecture
-build: $(DIST)/$(BINARY)
+# --- Argument Parsing ---
+BUMP="patch"
+VERSION=""
+NOTES=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    v*.*.*) VERSION="$1"; shift ;;
+    --major) BUMP="major"; shift ;;
+    --minor) BUMP="minor"; shift ;;
+    --patch) BUMP="patch"; shift ;;
+    -m|--message) NOTES="$2"; shift 2 ;;
+    *) echo "❌ Unknown argument: $1"; exit 1 ;;
+  esac
+done
 
-# Local build target
-$(DIST)/$(BINARY):
-	@mkdir -p $(DIST)
-	go build -trimpath -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY) ./cmd/respec
+# --- Detect and Calculate Version ---
+if [[ -z "$VERSION" ]]; then
+    if LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null); then
+        echo "🔍 Latest tag found: $LATEST_TAG"
+        if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+        else
+            echo "❌ Invalid latest tag format: '$LATEST_TAG'. Expected vX.Y.Z"
+            exit 1
+        fi
+        case "$BUMP" in
+            major) ((MAJOR++)); MINOR=0; PATCH=0 ;;
+            minor) ((MINOR++)); PATCH=0 ;;
+            patch) ((PATCH++)) ;;
+        esac
+        VERSION="v$MAJOR.$MINOR.$PATCH"
+    else
+        echo "🔍 No existing tags found. Creating initial release."
+        VERSION="$INITIAL_VERSION"
+    fi
+fi
 
-# Debug build - builds and installs to local system
-debug: build install
-	@echo "✅ Debug build installed to $(INSTALL_DIR)/$(BINARY)"
-	@echo "💡 Run with: $(BINARY) --help"
+# --- Confirmation Step ---
+echo "✅ New version will be: $VERSION"
+read -p "   Are you sure you want to proceed with tagging? (y/N) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "🛑 Release cancelled."
+    exit 1
+fi
+if [[ -z "$NOTES" ]]; then
+    echo "✏️ Please enter the release notes. End with Ctrl+D."
+    NOTES=$(</dev/stdin)
+fi
+if [[ -z "$NOTES" ]]; then
+    echo "❌ Release notes cannot be empty."
+    exit 1
+fi
 
-# Install the binary to local system
-install:
-	@echo "📦 Installing $(BINARY) to $(INSTALL_DIR)..."
-	@mkdir -p $(INSTALL_DIR)
-	@cp $(DIST)/$(BINARY) $(INSTALL_DIR)/
-	@chmod +x $(INSTALL_DIR)/$(BINARY)
-	@echo "✅ Installed $(BINARY) to $(INSTALL_DIR)"
-	@echo "💡 Make sure $(INSTALL_DIR) is in your PATH"
-	@echo "💡 Add this to your ~/.bashrc or ~/.zshrc if not already present:"
-	@echo "   export PATH=\"$(INSTALL_DIR):\$$PATH\""
+# --- Execution Step ---
+echo "1. Tagging version $VERSION..."
+git tag -a "$VERSION" -m "Release $VERSION"
 
-# Uninstall the binary from local system
-uninstall:
-	@echo "🗑️ Removing $(BINARY) from $(INSTALL_DIR)..."
-	@rm -f $(INSTALL_DIR)/$(BINARY)
-	@echo "✅ Uninstalled $(BINARY)"
+echo "2. Pushing tag to GitHub..."
+if ! GIT_TERMINAL_PROMPT=0 git push origin "$VERSION"; then
+    echo "❌ Git Error: Failed to push the new tag. Please check your permissions and credentials."
+    git tag -d "$VERSION"
+    exit 1
+fi
 
-# Cross-platform builds for all defined platforms
-all: $(PLATFORMS:%=$(DIST)/$(BINARY)-%)
+echo "3. Building release artifacts using 'make'..."
+make release
 
-$(DIST)/$(BINARY)-%:
-	@platform="$*"; \
-	os=$${platform%-*}; arch=$${platform#*-}; \
-	outfile="$(DIST)/$(BINARY)-$$os-$$arch"; \
-	[ "$$os" = "windows" ] && outfile="$$outfile.exe"; \
-	mkdir -p $(DIST); \
-	echo "--> Building for $$os/$$arch..."; \
-	GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
-	go build -trimpath -ldflags="$(LDFLAGS)" -o "$$outfile" ./cmd/respec
+echo "4. Creating GitHub Release..."
+# FIX: Explicitly upload all .zip files AND the SHA256SUMS file.
+# The `dist/*` glob will correctly expand to all files in the directory.
+gh release create "$VERSION" ../dist/* \
+    --title "respec $VERSION" \
+    --notes "$NOTES"
 
-# Clean the dist directory
-clean:
-	rm -rf $(DIST)
+echo "5. Notifying Go proxy..."
+(
+  GOPROXY=proxy.golang.org go list -m "$REPO@$VERSION"
+) &
 
-# The release target builds all platforms, zips the artifacts, and creates a checksum file.
-release: clean all
-	@echo "--> Zipping release artifacts..."; \
-	for platform in $(PLATFORMS); do \
-		os=$${platform%-*}; arch=$${platform#*-}; \
-		base="$(DIST)/$(BINARY)-$$os-$$arch"; \
-		out="$$base"; [ "$$os" = "windows" ] && out="$$base.exe"; \
-		zipfile="$$base.zip"; \
-		zip -j "$$zipfile" "$$out"; \
-	done
-	@echo "--> Generating checksums..."; \
-	cd $(DIST) && (command -v sha256sum >/dev/null && sha256sum *.zip > SHA256SUMS || shasum -a 256 *.zip > SHA256SUMS)
-
-# Show version info
-version:
-	@echo "Version:   $(VERSION)"
-	@echo "Commit:    $(COMMIT)"
-	@echo "BuildDate: $(DATE)"
-
-# Run tests
-test:
-	@echo "🧪 Running tests..."
-	go test -v ./...
-
-# Run linter
-lint:
-	@echo "🔍 Running linter..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		echo "⚠️ golangci-lint not found. Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
-		go vet ./...; \
-	fi
-
-# Format code
-fmt:
-	@echo "🎨 Formatting code..."
-	go fmt ./...
-
-# Tidy dependencies
-tidy:
-	@echo "🧹 Tidying dependencies..."
-	go mod tidy
-
-# Download dependencies
-deps:
-	@echo "📦 Downloading dependencies..."
-	go mod download
-
-# Development setup
-dev-setup: deps
-	@echo "🛠️ Setting up development environment..."
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "📦 Installing golangci-lint..."; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-	fi
-	@echo "✅ Development environment ready!"
-	@echo "💡 Run 'make debug' to build and install locally"
-
-# Show help
-help:
-	@echo "respec - OpenAPI Generator for Go"
-	@echo ""
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@echo "  build      Build the binary for the current platform"
-	@echo "  debug      Build and install to local system ($(INSTALL_DIR))"
-	@echo "  install    Install the built binary to local system"
-	@echo "  uninstall  Remove the binary from local system"
-	@echo "  all        Cross-compile for all platforms"
-	@echo "  release    Cross-compile for all platforms and zip outputs"
-	@echo "  clean      Remove build artifacts"
-	@echo "  test       Run tests"
-	@echo "  lint       Run linter"
-	@echo "  fmt        Format code"
-	@echo "  tidy       Tidy dependencies"
-	@echo "  deps       Download dependencies"
-	@echo "  dev-setup  Setup development environment"
-	@echo "  version    Show version metadata"
-	@echo "  help       Show this help message"
-	@echo ""
+echo ""
+echo "✅ Release $VERSION completed successfully!"
+echo "📦 Users can install with: go install $REPO@$VERSION"
