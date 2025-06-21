@@ -7,6 +7,7 @@ import (
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
+	"github.com/getkin/kin-openapi/openapi3"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -60,25 +61,23 @@ func New(projectPath string, config *config.Config) (*Analyzer, error) {
 // Analyze performs the full analysis of the loaded packages.
 func (a *Analyzer) Analyze() (*model.APIModel, error) {
 	fmt.Println("Analyzer is now building the route graph...")
+
 	tracker := &stateTracker{
 		routeGraph:     &model.RouteNode{},
 		trackedRouters: make(map[types.Object]*model.RouteNode),
 	}
 
+	// Pass 1: Find root router initializations
 	for _, pkg := range a.pkgs {
 		for _, file := range pkg.Syntax {
 			a.currentFile = file
-			ast.Inspect(file, func(n ast.Node) bool {
-				if callExpr, ok := n.(*ast.CallExpr); ok {
-					// Start analysis from any function call.
-					a.analyzeCallChain(tracker, callExpr)
-				}
-				return true
-			})
+			ast.Inspect(file, a.findRootRouters(tracker))
 		}
 	}
 
 	fmt.Println("Root routers identified. Now parsing routes...")
+
+	// Pass 2: Find method calls on tracked routers
 	for _, pkg := range a.pkgs {
 		for _, file := range pkg.Syntax {
 			a.currentFile = file
@@ -87,11 +86,18 @@ func (a *Analyzer) Analyze() (*model.APIModel, error) {
 	}
 
 	fmt.Println("Route graph complete. Analyzing handlers to infer schemas...")
+
+	// Pass 3: Analyze handlers for each discovered operation
 	sg := NewSchemaGenerator()
 	a.traverseAndAnalyzeHandlers(tracker.routeGraph, sg)
 
 	apiModel := &model.APIModel{
 		RouteGraph: tracker.routeGraph,
+	}
+
+	// FIX: Initialize the Components struct if it is nil before assigning to its fields.
+	if apiModel.Components == nil {
+		apiModel.Components = &openapi3.Components{}
 	}
 	apiModel.Components.Schemas = sg.schemas
 
