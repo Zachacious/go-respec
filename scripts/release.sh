@@ -55,22 +55,25 @@ done
 
 # --- Detect and Calculate Version ---
 if [[ -z "$VERSION" ]]; then
-    # Get the raw tag output from git
     LATEST_TAG_RAW=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
     if [[ -n "$LATEST_TAG_RAW" ]]; then
-        # FIX: Sanitize the tag to remove any trailing whitespace, newlines, or carriage returns.
         LATEST_TAG=$(echo "$LATEST_TAG_RAW" | tr -d '[:space:]')
         echo "🔍 Latest tag found: $LATEST_TAG"
         
-        if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            MAJOR="${BASH_REMATCH[1]}"
-            MINOR="${BASH_REMATCH[2]}"
-            PATCH="${BASH_REMATCH[3]}"
-        else
-            echo "❌ Invalid latest tag format: '$LATEST_TAG'. Expected vX.Y.Z"
+        # FIX: Replaced regex matching with more robust string parsing to avoid shell incompatibilities.
+        # Remove the leading 'v'
+        VERSION_PART="${LATEST_TAG#v}"
+        
+        # Set the Internal Field Separator to '.' and use `read` to parse the version.
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_PART"
+
+        # Validate that the components are numeric.
+        if ! [[ "$MAJOR" =~ ^[0-9]+$ && "$MINOR" =~ ^[0-9]+$ && "$PATCH" =~ ^[0-9]+$ ]]; then
+            echo "❌ Invalid latest tag format: '$LATEST_TAG'. Could not parse into vX.Y.Z format."
             exit 1
         fi
+        
         case "$BUMP" in
             major) ((MAJOR++)); MINOR=0; PATCH=0 ;;
             minor) ((MINOR++)); PATCH=0 ;;
