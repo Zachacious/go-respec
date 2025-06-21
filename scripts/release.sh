@@ -27,9 +27,14 @@ if ! GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"; then
     echo "❌ Git Error: Failed to pull from origin. Please ensure your git credentials are configured correctly."
     exit 1
 fi
-echo "🔄 Fetching all tags from the 'origin' remote..."
-if ! GIT_TERMINAL_PROMPT=0 git fetch origin --tags --force; then
-    echo "❌ Git Error: Failed to fetch tags. Please ensure your git credentials are configured correctly."
+echo "🔄 Pushing '$MAIN_BRANCH' to origin to ensure it is up-to-date..."
+if ! GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"; then
+    echo "❌ Git Error: Failed to push to origin. Please check your permissions and credentials."
+    exit 1
+fi
+echo "🔄 Fetching and pruning all tags from the 'origin' remote..."
+if ! GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags; then
+    echo "❌ Git Error: Failed to fetch and prune tags. Please ensure your git credentials are configured correctly."
     exit 1
 fi
 
@@ -50,8 +55,14 @@ done
 
 # --- Detect and Calculate Version ---
 if [[ -z "$VERSION" ]]; then
-    if LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null); then
+    # Get the raw tag output from git
+    LATEST_TAG_RAW=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+    if [[ -n "$LATEST_TAG_RAW" ]]; then
+        # FIX: Sanitize the tag to remove any trailing whitespace, newlines, or carriage returns.
+        LATEST_TAG=$(echo "$LATEST_TAG_RAW" | tr -d '[:space:]')
         echo "🔍 Latest tag found: $LATEST_TAG"
+        
         if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
             MINOR="${BASH_REMATCH[2]}"
@@ -88,18 +99,6 @@ if [[ -z "$NOTES" ]]; then
     echo "❌ Release notes cannot be empty."
     exit 1
 fi
-
-# --- Pre-release checks REMOVED ---
-# echo "🧪 Running tests..."
-# if ! make test; then
-#     echo "❌ Tests failed. Please fix them before releasing."
-#     exit 1
-# fi
-# echo "🔍 Running linter..."
-# if ! make lint; then
-#     echo "❌ Linting failed. Please fix issues before releasing."
-#     exit 1
-# fi
 
 # --- Execution Step ---
 echo "1. Tagging version $VERSION..."
