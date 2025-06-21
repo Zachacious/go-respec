@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"go/types"
 	"reflect"
 	"strings"
@@ -8,128 +9,110 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// SchemaGenerator holds state for schema generation, like a cache for already-generated types.
+// SchemaGenerator turns Go types into OpenAPI schema definitions.
 type SchemaGenerator struct {
-	schemas map[string]*openapi3.SchemaRef
+	// A cache to store schemas for types we've already processed, avoiding re-computation and handling recursion.
+	schemas map[types.Type]*openapi3.SchemaRef
 }
 
 func NewSchemaGenerator() *SchemaGenerator {
 	return &SchemaGenerator{
-		schemas: make(map[string]*openapi3.SchemaRef),
+		schemas: make(map[types.Type]*openapi3.SchemaRef),
 	}
 }
 
-// GenerateSchemaRef creates a JSON Schema for a given Go type and adds it to the component map.
-// It returns a reference to the schema.
-func (sg *SchemaGenerator) GenerateSchemaRef(typeObj types.Type) *openapi3.SchemaRef {
-	// Follow pointers and get the underlying type, but store the original for naming.
-	originalType := typeObj
-	if ptr, ok := typeObj.(*types.Pointer); ok {
-		typeObj = ptr.Elem()
-	}
-
-	// Use the qualified type name for caching to avoid conflicts.
-	var typeName string
-	if named, ok := originalType.(*types.Named); ok {
-		typeName = named.Obj().Pkg().Path() + "." + named.Obj().Name()
-	} else {
-		typeName = originalType.String()
-	}
-
-	if ref, ok := sg.schemas[typeName]; ok {
+// GenerateSchema is the main entry point for creating a schema from a Go type.
+// It returns a reference to the schema, which will be placed in the components section.
+func (sg *SchemaGenerator) GenerateSchema(t types.Type) *openapi3.SchemaRef {
+	// If we've seen this type before, return the cached reference.
+	if ref, ok := sg.schemas[t]; ok {
 		return ref
 	}
 
-	schema := sg.generateSchema(typeObj)
-
-	if named, ok := typeObj.(*types.Named); ok {
-		schemaName := named.Obj().Name()
-		// Store the full schema by its proper name in components
-		sg.schemas[schemaName] = &openapi3.SchemaRef{
-			Value: schema,
-		}
-		// Return a reference to it
-		return openapi3.NewSchemaRef("#/components/schemas/"+schemaName, nil)
+	// For named types (like structs), use the type's name. For others, generate a name.
+	typeName := t.String()
+	if named, ok := t.(*types.Named); ok {
+		typeName = named.Obj().Name()
 	}
 
-	// For anonymous types, return the schema directly.
-	return &openapi3.SchemaRef{Value: schema}
+	// Create a preliminary reference. This is crucial for handling recursive types.
+	// We add it to the cache *before* processing to break cycles.
+	schemaRef := &openapi3.SchemaRef{Ref: "#/components/schemas/" + typeName}
+	sg.schemas[t] = schemaRef
+
+	// Now, actually build the schema that the reference points to.
+	schema := sg.buildSchema(t)
+	schemaRef.Value = schema
+
+	return schemaRef
 }
 
-// generateSchema does the core work of converting a Go type to an OpenAPI schema.
-func (sg *SchemaGenerator) generateSchema(typeObj types.Type) *openapi3.Schema {
-	switch t := typeObj.Underlying().(type) {
+// buildSchema does the actual work of converting a type to a schema.
+func (sg *SchemaGenerator) buildSchema(t types.Type) *openapi3.Schema {
+	switch u := t.Underlying().(type) {
 	case *types.Basic:
-		return sg.schemaForBasic(t)
+		return sg.schemaForBasic(u)
 	case *types.Struct:
-		return sg.schemaForStruct(t)
+		return sg.schemaForStruct(u)
 	case *types.Slice:
-		// FIX: The WithItems method expects a *Schema, not a *SchemaRef.
-		// The correct way is to assign the SchemaRef to the Items field directly.
-		schema := openapi3.NewArraySchema()
-		schema.Items = sg.GenerateSchemaRef(t.Elem())
-		return schema
+		return openapi3.NewArraySchema().WithItems(sg.GenerateSchema(u.Elem()).Value)
+	case *types.Pointer:
+		return sg.GenerateSchema(u.Elem()).Value
 	case *types.Map:
-		schema := openapi3.NewObjectSchema()
-		schema.AdditionalProperties = openapi3.AdditionalProperties{
-			Schema: sg.GenerateSchemaRef(t.Elem()),
-		}
-		return schema
+		return openapi3.NewObjectSchema().WithAdditionalProperties(sg.GenerateSchema(u.Elem()).Value)
 	default:
+		// --- Start of fix for error 3 ---
 		schema := openapi3.NewObjectSchema()
-		schema.Description = "Unsupported type: " + t.String()
+		schema.Description = fmt.Sprintf("Unsupported type: %T", u)
 		return schema
+		// --- End of fix ---
 	}
 }
 
-func (sg *SchemaGenerator) schemaForBasic(basic *types.Basic) *openapi3.Schema {
-	switch basic.Kind() {
+func (sg *SchemaGenerator) schemaForBasic(b *types.Basic) *openapi3.Schema {
+	switch b.Kind() {
 	case types.String:
 		return openapi3.NewStringSchema()
+	case types.Bool:
+		return openapi3.NewBoolSchema()
 	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
 		types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
 		return openapi3.NewIntegerSchema()
 	case types.Float32, types.Float64:
 		return openapi3.NewFloat64Schema()
-	case types.Bool:
-		return openapi3.NewBoolSchema()
 	default:
+		// --- Start of fix for error 4 ---
 		schema := openapi3.NewStringSchema()
-		schema.Description = "Type mapped to string"
+		schema.Description = "Type " + b.Name()
 		return schema
+		// --- End of fix ---
 	}
 }
 
 func (sg *SchemaGenerator) schemaForStruct(s *types.Struct) *openapi3.Schema {
 	schema := openapi3.NewObjectSchema()
-	schema.Properties = make(map[string]*openapi3.SchemaRef)
-
 	for i := 0; i < s.NumFields(); i++ {
 		field := s.Field(i)
+		// Ignore unexported fields
 		if !field.Exported() {
 			continue
 		}
 
-		jsonTag := s.Tag(i)
-		jsonName := parseJsonTag(jsonTag)
-		if jsonName == "" {
-			jsonName = field.Name()
+		tag := s.Tag(i)
+		jsonTag := reflect.StructTag(tag).Get("json")
+		parts := strings.Split(jsonTag, ",")
+		fieldName := parts[0]
+
+		if fieldName == "-" {
+			continue // Field is explicitly ignored
 		}
-		if jsonName == "-" {
-			continue
+		if fieldName == "" {
+			fieldName = field.Name() // Default to field name
 		}
 
-		schema.Properties[jsonName] = sg.GenerateSchemaRef(field.Type())
+		// Recursively generate the schema for the field's type.
+		fieldSchemaRef := sg.GenerateSchema(field.Type())
+		schema.WithPropertyRef(fieldName, fieldSchemaRef)
 	}
 	return schema
-}
-
-func parseJsonTag(tag string) string {
-	// FIX: Use reflect.StructTag to correctly parse the tag.
-	tagValue := reflect.StructTag(tag).Get("json")
-	parts := strings.Split(tagValue, ",")
-	if len(parts) > 0 && parts[0] != "" {
-		return parts[0]
-	}
-	return ""
 }

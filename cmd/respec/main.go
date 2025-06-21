@@ -38,13 +38,13 @@ framework-agnostic and highly configurable through a .respec.yaml file.`,
 				os.Exit(1)
 			}
 			fmt.Println("Configuration loaded.")
-			a, err := analyzer.New(projectPath, cfg)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error initializing analyzer: %v\n", err)
-				os.Exit(1)
-			}
+			// a, err := analyzer.New(projectPath, cfg)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Error initializing analyzer: %v\n", err)
+			// 	os.Exit(1)
+			// }
 			fmt.Println("Analyzer initialized.")
-			apiModel, err := a.Analyze()
+			apiModel, err := analyzer.Analyze(projectPath, cfg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error during analysis: %v\n", err)
 				os.Exit(1)
