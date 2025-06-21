@@ -22,7 +22,6 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 		return
 	}
 
-	// This is our Level 2 metadata source.
 	if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
 		op.Spec.Summary = parsedComment.Summary
 		op.Spec.Description = parsedComment.Description
@@ -31,7 +30,6 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 		}
 	}
 
-	// Inspect the function body for Level 3 inferred data.
 	ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
 		callExpr, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -42,6 +40,53 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 		a.checkForParameters(op, callExpr)
 		return true
 	})
+}
+
+// findFuncDecl locates the AST declaration for any function or method by its position.
+func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
+	if funcObj == nil {
+		return nil
+	}
+	pos := funcObj.Pos()
+
+	// Find which of the loaded packages contains the declaration.
+	for _, pkg := range a.pkgs {
+		for _, file := range pkg.Syntax {
+			// Check if the declaration's position is within this file.
+			if file.Pos() <= pos && pos < file.End() {
+				var foundDecl *ast.FuncDecl
+				ast.Inspect(file, func(n ast.Node) bool {
+					// We are looking for a function declaration AST node.
+					fn, ok := n.(*ast.FuncDecl)
+					if !ok {
+						return true // Continue searching
+					}
+
+					// Get the types.Object for the function name identifier in the AST.
+					var defObj types.Object
+					if fn.Recv != nil && len(fn.Recv.List) > 0 {
+						// This is a method. We must look up the method on the receiver's type.
+						recvType := pkg.TypesInfo.TypeOf(fn.Recv.List[0].Type)
+						if method, _, _ := types.LookupFieldOrMethod(recvType, true, pkg.Types, fn.Name.Name); method != nil {
+							defObj = method
+						}
+					} else {
+						// This is a regular function.
+						defObj = pkg.TypesInfo.Defs[fn.Name]
+					}
+
+					// If the AST node's object position matches our target object's position, we have found it.
+					if defObj != nil && defObj.Pos() == pos {
+						foundDecl = fn
+						return false // Stop searching
+					}
+					return true
+				})
+				return foundDecl
+			}
+		}
+	}
+	return nil
 }
 
 // checkForParameters looks for calls that read query or header values.
@@ -59,12 +104,9 @@ func (a *Analyzer) checkForParameters(op *model.Operation, call *ast.CallExpr) {
 	paramIn := ""
 	methodName := selExpr.Sel.Name
 
-	// Check for Gin-like .Query("name")
 	if methodName == "Query" {
 		paramIn = openapi3.ParameterInQuery
 	}
-
-	// Check for standard library-like r.URL.Query().Get("name") and r.Header.Get("name")
 	if methodName == "Get" {
 		if receiverSel, ok := selExpr.X.(*ast.CallExpr); ok {
 			if innerSel, ok := receiverSel.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "Query" {
@@ -76,7 +118,6 @@ func (a *Analyzer) checkForParameters(op *model.Operation, call *ast.CallExpr) {
 	}
 
 	if paramIn != "" {
-		// Avoid adding duplicate parameters if already found in path
 		for _, p := range op.Spec.Parameters {
 			if p.Value != nil && p.Value.Name == paramName {
 				return
