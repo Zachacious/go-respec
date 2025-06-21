@@ -22,7 +22,6 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 		return
 	}
 
-	// --- NEW: Parse Doc Comments ---
 	// This is our Level 2 metadata source.
 	if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
 		op.Spec.Summary = parsedComment.Summary
@@ -31,7 +30,6 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 			op.Spec.Tags = parsedComment.Tags
 		}
 	}
-	// -------------------------------
 
 	// Inspect the function body for Level 3 inferred data.
 	ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
@@ -41,10 +39,7 @@ func (a *Analyzer) analyzeOperation(op *model.Operation, sg *SchemaGenerator) {
 		}
 		a.checkForRequestBody(op, callExpr, sg)
 		a.checkForResponseBody(op, callExpr, sg)
-
-		// FEAT: Infer Query and Header Parameters
 		a.checkForParameters(op, callExpr)
-
 		return true
 	})
 }
@@ -56,7 +51,6 @@ func (a *Analyzer) checkForParameters(op *model.Operation, call *ast.CallExpr) {
 		return
 	}
 
-	// Get the parameter name from the first argument, e.g., the "page" in c.Query("page")
 	paramName, ok := a.getStringFromExpr(call.Args[0])
 	if !ok {
 		return
@@ -70,8 +64,7 @@ func (a *Analyzer) checkForParameters(op *model.Operation, call *ast.CallExpr) {
 		paramIn = openapi3.ParameterInQuery
 	}
 
-	// Check for standard library-like r.URL.Query().Get("name")
-	// and r.Header.Get("name")
+	// Check for standard library-like r.URL.Query().Get("name") and r.Header.Get("name")
 	if methodName == "Get" {
 		if receiverSel, ok := selExpr.X.(*ast.CallExpr); ok {
 			if innerSel, ok := receiverSel.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "Query" {
@@ -102,10 +95,8 @@ func (a *Analyzer) checkForRequestBody(op *model.Operation, call *ast.CallExpr, 
 		return
 	}
 
-	// We are looking for methods like Bind, BindJSON, ShouldBindJSON etc.
 	if strings.Contains(selExpr.Sel.Name, "Bind") {
 		if len(call.Args) > 0 {
-			// The argument is the variable to bind to, e.g., &req
 			arg := call.Args[0]
 			varObj := a.getTypeFromExpr(arg)
 			if varObj != nil {
@@ -141,37 +132,19 @@ func (a *Analyzer) checkForResponseBody(op *model.Operation, call *ast.CallExpr,
 		op.Spec.Responses = openapi3.NewResponses()
 	}
 
-	// FIX: Use the .Set() method on the Responses struct.
 	response := openapi3.NewResponse().WithDescription("Success").WithContent(
 		openapi3.NewContentWithJSONSchemaRef(schemaRef),
 	)
 	op.Spec.Responses.Set(statusCode, &openapi3.ResponseRef{Value: response})
 }
 
-// // findFuncDecl finds the AST node for a given function object.
-// func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
-// 	// This implementation is correct. A more robust version would use position info.
-// 	for _, pkg := range a.pkgs {
-// 		for _, file := range pkg.Syntax {
-// 			obj := file.Scope.Lookup(funcObj.Name())
-// 			if obj != nil && obj.Pos() == funcObj.Pos() {
-// 				for _, decl := range file.Decls {
-// 					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == funcObj.Name() {
-// 						return fn
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
-
 // getTypeFromExpr resolves an expression to its underlying type.
 func (a *Analyzer) getTypeFromExpr(expr ast.Expr) types.Type {
-	info := a.fileTypeInfo[a.currentFile]
-	if info != nil {
-		if tv, ok := info.Types[expr]; ok {
-			return tv.Type
+	if a.fileTypeInfo != nil {
+		if info, ok := a.fileTypeInfo[a.currentFile]; ok && info != nil {
+			if tv, ok := info.Types[expr]; ok {
+				return tv.Type
+			}
 		}
 	}
 	return nil

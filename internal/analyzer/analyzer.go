@@ -93,7 +93,7 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 			return true
 		}
 
-		// Case 1: Is this a router initialization? (e.g., r := chi.NewRouter())
+		// Case 1: Is this a router initialization?
 		if a.isRouterInitialization(callExpr) {
 			if varObj := a.findAssignStmt(a.currentFile, callExpr); varObj != nil {
 				if _, exists := tracker.trackedRouters[varObj]; !exists {
@@ -108,15 +108,35 @@ func (a *Analyzer) buildASTVisitor(tracker *stateTracker) func(n ast.Node) bool 
 			return true
 		}
 
-		// Case 2: Is this a method call? (e.g., r.Route(...))
-		if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
-			if receiverObj := a.getObjectForExpr(selExpr.X); receiverObj != nil {
-				if node, ok := tracker.trackedRouters[receiverObj]; ok {
-					a.processRouteCall(tracker, node, callExpr, selExpr, nil)
-				}
-			}
+		// Case 2: Is this a method call?
+		// FIX: Use the blank identifier `_` for selExpr as it's not used inside the block.
+		if _, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+			a.analyzeCallChain(tracker, callExpr)
 		}
 		return true
+	}
+}
+
+// analyzeCallChain is the recursive engine for router tracking.
+func (a *Analyzer) analyzeCallChain(tracker *stateTracker, call *ast.CallExpr) {
+	selExpr, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+	receiverExpr := selExpr.X
+	receiverObj := a.getObjectForExpr(receiverExpr)
+
+	if receiverObj != nil {
+		if node, ok := tracker.trackedRouters[receiverObj]; ok {
+			// The receiver is a tracked router. Process the method call.
+			a.processRouteCall(tracker, node, call, selExpr, nil)
+			return
+		}
+	}
+
+	// Handle chained calls (e.g., r.With(...).Get(...))
+	if nextCall, ok := receiverExpr.(*ast.CallExpr); ok {
+		a.analyzeCallChain(tracker, nextCall)
 	}
 }
 
@@ -139,7 +159,6 @@ func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
 		return nil
 	}
 
-	// Find the package where the function is defined.
 	var funcPkg *packages.Package
 	for _, p := range a.pkgs {
 		if p.Types == funcObj.Pkg() {
@@ -151,37 +170,31 @@ func (a *Analyzer) findFuncDecl(funcObj types.Object) *ast.FuncDecl {
 		return nil
 	}
 
-	// Search through the files in that specific package.
 	for _, file := range funcPkg.Syntax {
 		if file == nil {
 			continue
 		}
-		// Look at all top-level declarations in the file.
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok {
 				continue
 			}
 
-			// For regular functions, check if the definition object matches.
-			if funcPkg.TypesInfo.Defs[fn.Name] == funcObj {
-				return fn
+			// Check for both top-level functions and methods on types.
+			var defObj types.Object
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				// It's a method. Get the method object from the receiver type.
+				recvType := funcPkg.TypesInfo.TypeOf(fn.Recv.List[0].Type)
+				if sel, _, _ := types.LookupFieldOrMethod(recvType, true, funcObj.Pkg(), funcObj.Name()); sel != nil {
+					defObj = sel
+				}
+			} else {
+				// It's a regular function.
+				defObj = funcPkg.TypesInfo.Defs[fn.Name]
 			}
 
-			// For methods, we need to check the receiver type.
-			if fn.Recv != nil && len(fn.Recv.List) > 0 {
-				// Get the type of the receiver (e.g., *myHandlers)
-				recvType := funcPkg.TypesInfo.TypeOf(fn.Recv.List[0].Type)
-				if recvType == nil {
-					continue
-				}
-
-				// Look for the method on this type.
-				if method, _, _ := types.LookupFieldOrMethod(recvType, true, funcObj.Pkg(), funcObj.Name()); method != nil {
-					if method.Pos() == funcObj.Pos() {
-						return fn
-					}
-				}
+			if defObj != nil && defObj.Pos() == funcObj.Pos() {
+				return fn
 			}
 		}
 	}

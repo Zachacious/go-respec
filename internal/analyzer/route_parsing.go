@@ -2,7 +2,9 @@ package analyzer
 
 import (
 	"go/ast"
+	"go/token"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Zachacious/go-respec/internal/model"
@@ -11,17 +13,25 @@ import (
 
 var pathParamRegex = regexp.MustCompile(`{([^}]+)}|:(\w+)`)
 
-var httpMethods = map[string]bool{
-	"Get": true, "Post": true, "Put": true, "Delete": true, "Patch": true, "Head": true,
-}
-
+// processRouteCall is the main dispatcher for handling method calls on a tracked router.
 func (a *Analyzer) processRouteCall(tracker *stateTracker, parentNode *model.RouteNode, call *ast.CallExpr, sel *ast.SelectorExpr, builderCall *ast.CallExpr) {
 	methodName := sel.Sel.Name
-	// This logic needs to be enhanced by the router definitions from config
-	if httpMethods[methodName] {
+	receiverType := a.getTypeFromExpr(sel.X)
+	if receiverType == nil {
+		return
+	}
+
+	methodType := a.getRouteMethodType(receiverType, methodName)
+
+	switch methodType {
+	case "endpoint":
 		a.parseEndpoint(parentNode, call, methodName, builderCall)
-	} else if methodName == "Route" || methodName == "Group" {
+	case "group":
 		a.parseGroup(tracker, parentNode, call, builderCall)
+	case "middleware":
+		// This is a middleware wrapper like r.With(...).
+		// Its return value is another router, which the recursive analyzeCallChain will handle.
+		// No action is needed here, but we recognize it.
 	}
 }
 
@@ -54,32 +64,34 @@ func (a *Analyzer) parseEndpoint(node *model.RouteNode, call *ast.CallExpr, http
 		if paramName == "" {
 			paramName = match[2]
 		}
-		param := openapi3.NewPathParameter(paramName).
-			WithSchema(openapi3.NewStringSchema())
+		param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
 		op.Spec.AddParameter(param)
 	}
 
 	if builderCall != nil {
 		op.BuilderMetadata = a.parseBuilderChain(builderCall)
 	}
-
 	node.Operations = append(node.Operations, op)
 }
 
 func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode, call *ast.CallExpr, builderCall *ast.CallExpr) {
-	if len(call.Args) < 2 {
-		return
+	var pathPrefix string
+	var funcLit *ast.FuncLit
+
+	// Handle both r.Route("/prefix", func) and pathless r.Group(func)
+	if pathLit, ok := call.Args[0].(*ast.BasicLit); ok {
+		pathPrefix, _ = a.getStringFromExpr(pathLit)
+		if len(call.Args) > 1 {
+			funcLit, _ = call.Args[1].(*ast.FuncLit)
+		}
+	} else {
+		funcLit, _ = call.Args[0].(*ast.FuncLit)
 	}
-	pathPrefix, _ := a.getStringFromExpr(call.Args[0])
-	funcLit, ok := call.Args[1].(*ast.FuncLit)
-	if !ok {
+	if funcLit == nil {
 		return
 	}
 
-	groupNode := &model.RouteNode{
-		PathPrefix: pathPrefix,
-		Parent:     parentNode,
-	}
+	groupNode := &model.RouteNode{PathPrefix: pathPrefix, Parent: parentNode}
 	parentNode.Children = append(parentNode.Children, groupNode)
 
 	if len(funcLit.Type.Params.List) > 0 {
@@ -88,7 +100,6 @@ func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode
 		if subRouterObj != nil {
 			tracker.trackedRouters[subRouterObj] = groupNode
 			groupNode.GoVar = subRouterObj
-			// FIX: Correctly call buildASTVisitor with only one argument.
 			ast.Inspect(funcLit.Body, a.buildASTVisitor(tracker))
 			delete(tracker.trackedRouters, subRouterObj)
 		}
@@ -96,14 +107,24 @@ func (a *Analyzer) parseGroup(tracker *stateTracker, parentNode *model.RouteNode
 }
 
 func buildFullPath(node *model.RouteNode, suffix string) string {
-	if node == nil {
-		return suffix
+	path := suffix
+	for n := node; n != nil; n = n.Parent {
+		if n.PathPrefix != "" {
+			// A simple join logic, needs to be more robust to handle slashes.
+			path = n.PathPrefix + path
+		}
 	}
-	path := ""
-	if node.PathPrefix != "" {
-		path = node.PathPrefix + suffix
-	} else {
-		path = suffix
+	return path
+}
+
+func (a *Analyzer) getStringFromExpr(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
 	}
-	return buildFullPath(node.Parent, path)
+	s, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
 }

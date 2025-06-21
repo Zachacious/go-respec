@@ -2,8 +2,6 @@ package analyzer
 
 import (
 	"go/ast"
-	"go/token"
-	"strconv"
 
 	"github.com/Zachacious/go-respec/respec"
 )
@@ -41,15 +39,15 @@ func (a *Analyzer) parseBuilderChain(call *ast.CallExpr) *respec.Builder {
 	return b
 }
 
-func (a *Analyzer) getStringFromExpr(expr ast.Expr) (string, bool) {
-	lit, ok := expr.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return "", false
-	}
-	// FIX: Correctly handle the (string, error) tuple from Unquote.
-	s, err := strconv.Unquote(lit.Value)
-	if err != nil {
-		return "", false
-	}
-	return s, true
-}
+// func (a *Analyzer) getStringFromExpr(expr ast.Expr) (string, bool) {
+// 	lit, ok := expr.(*ast.BasicLit)
+// 	if !ok || lit.Kind != token.STRING {
+// 		return "", false
+// 	}
+// 	// FIX: Correctly handle the (string, error) tuple from Unquote.
+// 	s, err := strconv.Unquote(lit.Value)
+// 	if err != nil {
+// 		return "", false
+// 	}
+// 	return s, true
+// }
