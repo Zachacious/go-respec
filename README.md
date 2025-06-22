@@ -89,9 +89,9 @@ respec
 
 ---
 
-### Go Metadata API Reference(`respec.Route()`)
+### Go Metadata API Reference(`respec.H`)
 
-This is the Layer 1 override system. It gives you explicit, code-level control over the generated spec for any endpoint. It is designed to be an unobtrusive "decorator" for your existing route definitions.
+This is the Layer 1 override system. It gives you explicit, code-level control over the generated spec for any endpoint. It is designed to be an unobtrusive "decorator" for your existing handler functions.
 
 Start by importing the `respec` library:
 
@@ -100,7 +100,7 @@ import "github.com/Zachacious/go-respec/respec"
 ```
 
 **Basic Usage:**
-You simply wrap your entire route registration statement inside a `respec.Route()` call and then chain methods to add metadata.
+You simply wrap your handler function inside a `respec.H()` call and then chain methods to add metadata.
 
 **Before:**
 
@@ -111,12 +111,12 @@ r.With(mw.Authenticator).Post("/users", userHandlers.Create)
 **After:**
 
 ```go
-respec.Route(
-    r.With(mw.Authenticator).Post("/users", userHandlers.Create),
-).
-    Tag("User Management").
-    Summary("Create a new system user").
-    Security("BearerAuth")
+r.With(mw.Authenticator).Post("/users",
+    respec.H(userHandlers.Create).
+        Tag("User Management").
+        Summary("Create a new system user").
+        Security("BearerAuth"),
+)
 ```
 
 **Available Methods:**
