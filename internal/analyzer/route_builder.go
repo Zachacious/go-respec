@@ -48,9 +48,9 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 		op.HandlerPackage = handlerObj.Pkg().Path()
 	}
 
-	if metadata, ok := s.Metadata[call]; ok {
-		op.BuilderMetadata = metadata
-	}
+	// if metadata, ok := s.Metadata[call]; ok {
+	// 	op.BuilderMetadata = metadata
+	// }
 
 	routeNode := val.Node
 	routeNode.Operations = append(routeNode.Operations, op)

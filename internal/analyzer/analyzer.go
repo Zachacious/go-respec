@@ -39,7 +39,7 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 
 	// Perform analysis phases.
 	state.discoverUniverse()
-	state.FindAllMetadata()
+	// state.FindAllMetadata()
 	state.performDataFlowAnalysis()
 	state.analyzeHandlers()
 

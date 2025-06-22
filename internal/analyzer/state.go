@@ -91,7 +91,7 @@ type State struct {
 
 	Config *config.Config
 
-	Metadata MetadataMap
+	// Metadata MetadataMap
 }
 
 // NewState creates a new State instance.
@@ -120,7 +120,7 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 		RouteGraph:  &model.RouteNode{PathPrefix: "/"},
 		SchemaGen:   NewSchemaGenerator(),
 		Config:      cfg,
-		Metadata:    make(MetadataMap),
+		// Metadata:    make(MetadataMap),
 	}
 
 	// Immediately run the resolver to populate our type map.

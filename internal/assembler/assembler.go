@@ -6,6 +6,7 @@ import (
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
+	"github.com/Zachacious/go-respec/respec"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -81,30 +82,25 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 			}
 		}
 
-		// Layer 1 - Explicit Overrides from Metadata Builder
-		// If metadata from a respec.Route() wrapper exists, it has the highest
-		// priority and will override any inferred or doc comment values.
-		if op.BuilderMetadata != nil {
-			meta := op.BuilderMetadata
-			if s := meta.GetSummary(); s != "" {
+		// Look up metadata using the new respec.H() API.
+		if builder := respec.GetByHandler(op.GoHandler); builder != nil {
+			if s := builder.GetSummary(); s != "" {
 				operationSpec.Summary = s
 			}
-			if d := meta.GetDescription(); d != "" {
+			if d := builder.GetDescription(); d != "" {
 				operationSpec.Description = d
 			}
-			if t := meta.GetTags(); len(t) > 0 {
+			if t := builder.GetTags(); len(t) > 0 {
 				operationSpec.Tags = t
 			}
-			if schemes := meta.GetSecurity(); len(schemes) > 0 {
-				// This creates a new security requirement based on the names
-				// provided to the builder, e.g., .Security("BearerAuth")
+			if schemes := builder.GetSecurity(); len(schemes) > 0 {
 				req := openapi3.SecurityRequirement{}
 				for _, schemeName := range schemes {
 					req[schemeName] = []string{}
 				}
-				// This OVERWRITES any security that was inferred from middleware.
 				operationSpec.Security = &openapi3.SecurityRequirements{req}
 			}
+			// (Future: Add param overrides here)
 		}
 
 		// Find or create the PathItem for this route.
