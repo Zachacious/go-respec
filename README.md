@@ -84,16 +84,101 @@ cd /path/to/your/project
 respec
 ```
 
-3. (Optional) Add overrides using the `respec.Route` API:
+3. Inspect `openapi.yaml`. You will find a surprisingly complete specification generated entirely from your source code.
+
+---
+
+### Go Metadata API Reference(`respec.Route()`)
+
+This is the Layer 1 override system. It gives you explicit, code-level control over the generated spec for any endpoint. It is designed to be an unobtrusive "decorator" for your existing route definitions.
+
+Start by importing the `respec` library:
 
 ```go
 import "github.com/Zachacious/go-respec/respec"
+```
 
-...
+**Basic Usage:**
+You simply wrap your entire route registration statement inside a `respec.Route()` call and then chain methods to add metadata.
 
-respec.Route(r.Post("/users", userHandlers.Create)).
+**Before:**
+
+```go
+r.With(mw.Authenticator).Post("/users", userHandlers.Create)
+```
+
+**After:**
+
+```go
+respec.Route(
+    r.With(mw.Authenticator).Post("/users", userHandlers.Create),
+).
     Tag("User Management").
-    Summary("Create a new system user")
+    Summary("Create a new system user").
+    Security("BearerAuth")
+```
+
+**Available Methods:**
+All methods are chainable and can be called in any order.
+
+- `.Summary(string)`
+  Overrides the inferred summary for the operation. This is typically the one-line title in API documentation.
+
+```go
+respec.Route(r.Get("/{id}", handler)).Summary("Get User by ID")
+```
+
+- `.Description(string)`
+  Overrides the inferred `description` for the operation. This is the longer, more detailed explanation.
+
+```go
+respec.Route(r.Get("/{id}", handler)).
+    Description("Retrieves a single user object, including their profile and roles.")
+```
+
+- `.Tag(...string)`
+  Adds one or more tags to the operation, which is used for grouping in documentation UIs like Swagger UI.
+
+```go
+// Single tag
+respec.Route(r.Get("/{id}", handler)).Tag("User Management")
+
+// Multiple tags
+respec.Route(r.Get("/{id}/sessions", handler)).Tag("User Management", "Sessions")
+```
+
+- `.Security(string)`
+  Applies a security scheme to the operation. The string must match a key you have defined in the `securitySchemes` section of your `.respec.yaml` file. This overrides any security inferred from middleware.
+
+```go
+respec.Route(r.Get("/{id}", handler)).Security("BearerAuth")
+```
+
+- `.OverrideParam(name string, modifier func(*openapi3.Parameter))`
+  (Advanced) Provides fine-grained control over a single parameter. The modifier function receives the inferred parameter object, allowing you to change any of its properties.
+
+```go
+respec.Route(r.Get("/{id}", handler)).
+    OverrideParam("id", func(p *openapi3.Parameter) {
+        p.Description = "The unique identifier of the user (UUID)."
+        p.Schema.Value.Format = "uuid"
+    })
+```
+
+### Grouping Metadata(`respec.Group()`)
+
+You can use `respec.Group()` to apply metadata to an entire block of routes. The analyzer will apply the metadata to every endpoint defined within that group's function literal.
+
+```go
+respec.Group(r.Route("/admin", func(r chi.Router) {
+    // Every route inside this block will automatically get the "Admin" tag
+    // and the "AdminSecurity" scheme applied.
+    r.Get("/users", admin.ListUsers)
+    r.Post("/users", admin.CreateUser)
+    r.Delete("/users/{id}", admin.DeleteUser)
+})).
+    Tag("Admin").
+    Security("AdminSecurity")
 ```
 
 ---
