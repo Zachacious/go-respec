@@ -2,7 +2,8 @@
 
 # respec
 
-> A Go static analysis tool for generating OpenAPI v3 specifications with zero magic comments.
+> Forget magic comments. If your code is your source-of-truth, then you want a tool that generates your OpenAPI spec from your Go source code without cluttering it with annotations.
+> RESPEC is that tool. Genernate OpenAPI v3 spec automatically from inferrence, and easy overrides.
 
 **respec** is a powerful, framework-agnostic CLI tool that introspects your Go source code to generate a production-grade OpenAPI specification. It is built on a philosophy of smart inference, sensible defaults, and explicit-but-unobtrusive overrides.
 
@@ -233,6 +234,20 @@ Prints the current version of the tool.
 
 ```bash
 respec version
+```
+
+#### `validate <file>`
+
+Validates that a given OpenAPI specification file is compliant with the OpenAPI 3.1 standard. It will report any errors it finds.
+
+**Usage:**
+
+```bash
+# Validate the default generated file
+respec validate openapi.yaml
+
+# Validate a JSON spec
+respec validate specs/api.json
 ```
 
 ---

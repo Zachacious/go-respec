@@ -1,25 +1,27 @@
 package main
 
 import (
-	"encoding/json" // Add this import for JSON output
+	"encoding/json"
 	"fmt"
 	"os"
-	"strings" // Add this import for checking file extensions
+	"strings"
 
 	"github.com/Zachacious/go-respec/internal/analyzer"
 	"github.com/Zachacious/go-respec/internal/assembler"
 	"github.com/Zachacious/go-respec/internal/config"
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
+// These variables are set at build time by the Makefile's ldflags
 var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
 )
 
-// --- START: Default .respec.yaml content ---
+// defaultRespecYAML contains the content for the default .respec.yaml file.
 const defaultRespecYAML = `# .respec.yaml - Configuration for the respec OpenAPI generator
 
 # High-level information for your OpenAPI specification.
@@ -62,16 +64,17 @@ securitySchemes:
 #     schemeName: "BearerAuth"
 `
 
-// --- END: Default .respec.yaml content ---
-
 func main() {
 	var outputPath string
 
+	// rootCmd is the main command for generating the spec.
 	var rootCmd = &cobra.Command{
 		Use:   "respec [path]",
 		Short: "respec is a Go static analysis tool to generate OpenAPI specs without magic comments.",
-		Long:  `...`, // Long description unchanged
-		Args:  cobra.MaximumNArgs(1),
+		Long: `respec analyzes a Go project's source code to infer API routes, handlers,
+and schemas, producing a valid OpenAPI v3 specification. It is designed to be
+framework-agnostic and highly configurable through a .respec.yaml file.`,
+		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			projectPath := "."
 			if len(args) > 0 {
@@ -99,7 +102,6 @@ func main() {
 				os.Exit(1)
 			}
 
-			// --- START: JSON or YAML Output Logic ---
 			var outputData []byte
 			// Check the output file extension to determine the format.
 			if strings.HasSuffix(strings.ToLower(outputPath), ".json") {
@@ -114,7 +116,6 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error marshalling spec: %v\n", err)
 				os.Exit(1)
 			}
-			// --- END: JSON or YAML Output Logic ---
 
 			err = os.WriteFile(outputPath, outputData, 0644)
 			if err != nil {
@@ -125,11 +126,18 @@ func main() {
 		},
 	}
 
+	// versionCmd prints the version information.
 	var versionCmd = &cobra.Command{
-		// ... version command unchanged
+		Use:   "version",
+		Short: "Print the version number of respec",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("respec version %s\n", version)
+			fmt.Printf("commit: %s\n", commit)
+			fmt.Printf("built at: %s\n", date)
+		},
 	}
 
-	// --- START: New `init` Command ---
+	// initCmd creates a default .respec.yaml file.
 	var initCmd = &cobra.Command{
 		Use:   "init",
 		Short: "Create a default .respec.yaml configuration file",
@@ -149,13 +157,41 @@ func main() {
 			fmt.Printf("✅ Successfully created '%s'.\n", configFileName)
 		},
 	}
-	// --- END: New `init` Command ---
 
+	// validateCmd validates an OpenAPI specification file.
+	var validateCmd = &cobra.Command{
+		Use:   "validate <file>",
+		Short: "Validate an OpenAPI specification file",
+		Long:  "Validates that the given OpenAPI specification file (JSON or YAML) conforms to the OpenAPI 3.1 standard.",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			specPath := args[0]
+			fmt.Printf("Validating specification at: %s\n", specPath)
+
+			loader := openapi3.NewLoader()
+			doc, err := loader.LoadFromFile(specPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "❌ Error loading specification file: %v\n", err)
+				os.Exit(1)
+			}
+
+			err = doc.Validate(loader.Context)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "❌ Specification is invalid:\n%v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("✅ Specification is valid.")
+		},
+	}
+
+	// Register all commands and flags.
 	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(initCmd) // Add the new command to the root
-
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(validateCmd)
 	rootCmd.Flags().StringVarP(&outputPath, "output", "o", "openapi.yaml", "Output file for the OpenAPI specification (e.g., openapi.yaml or openapi.json)")
 
+	// Execute the root command.
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
