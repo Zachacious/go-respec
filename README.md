@@ -89,7 +89,7 @@ respec
 
 ---
 
-### Go Metadata API Reference(`respec.H`)
+### Go Metadata API Reference
 
 This is the Layer 1 override system. It gives you explicit, code-level control over the generated spec for any endpoint. It is designed to be an unobtrusive "decorator" for your existing handler functions.
 
@@ -99,8 +99,8 @@ Start by importing the `respec` library:
 import "github.com/Zachacious/go-respec/respec"
 ```
 
-**Basic Usage:**
-You simply wrap your handler function inside a `respec.H()` call and then chain methods to add metadata.
+`respec.Handler`
+You simply wrap your handler function inside a `respec.Handler()` call and then chain methods to add metadata.
 
 **Before:**
 
@@ -112,15 +112,30 @@ r.With(mw.Authenticator).Post("/users", userHandlers.Create)
 
 ```go
 r.With(mw.Authenticator).Post("/users",
-    respec.H(userHandlers.Create).
+    respec.Handler(userHandlers.Create).
         Tag("User Management").
         Summary("Create a new system user").
         Security("BearerAuth"),
 )
 ```
 
+`respec.Group`
+To apply metadata to an entire block of routes, you can wrap the block's function literal in `respec.Group()`. The static analyzer will apply the chained metadata to every endpoint defined within that block.
+
+```go
+r.Route("/admin", respec.Group(func() {
+    // Every route inside this block will automatically get the "Admin" tag
+    // and the "AdminSecurity" scheme applied.
+    r.Get("/users", respec.Handler(admin.ListUsers))
+    r.Post("/users", respec.Handler(admin.CreateUser))
+    r.Delete("/users/{id}", respec.Handler(admin.DeleteUser))
+}).
+    Tag("Admin").
+    Security("AdminSecurity"))
+```
+
 **Available Methods:**
-All methods are chainable and can be called in any order.
+All methods are chainable and can be called in any order on both `respec.Handler` and `respec.Group`.
 
 - `.Summary(string)`
   Overrides the inferred summary for the operation. This is typically the one-line title in API documentation.
