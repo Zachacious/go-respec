@@ -10,10 +10,11 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+// performDataFlowAnalysis performs data flow analysis on the router initialization sources.
 func (s *State) performDataFlowAnalysis() {
-	fmt.Println("Phase 3: Performing data flow analysis...")
+	fmt.Println("Phase3: Performing data flow analysis...")
 	initialRouterVars := s.findInitialRouterVars()
-	fmt.Printf("  [Info] Found %d router initialization sources.\n", len(initialRouterVars))
+	fmt.Printf(" [Info] Found %d router initialization sources.\n", len(initialRouterVars))
 
 	var worklist []*types.Var
 	for _, v := range initialRouterVars {
@@ -25,9 +26,10 @@ func (s *State) performDataFlowAnalysis() {
 		worklist = worklist[1:]
 		s.findAndProcessUsages(v)
 	}
-	fmt.Printf("  [Info] Worklist processing complete.\n")
+	fmt.Printf(" [Info] Worklist processing complete.\n")
 }
 
+// findInitialRouterVars finds the initial router variables.
 func (s *State) findInitialRouterVars() []*types.Var {
 	var initialVars []*types.Var
 	for _, pkg := range s.pkgs {
@@ -58,9 +60,9 @@ func (s *State) findInitialRouterVars() []*types.Var {
 										node := &model.RouteNode{GoVar: v, Parent: s.RouteGraph}
 										s.RouteGraph.Children = append(s.RouteGraph.Children, node)
 										trackedVal := &TrackedValue{
-											Source:    callExpr,
-											RouterDef: resolvedType.Definition,
-											Node:      node,
+											Source:      callExpr,
+											RouterDef:   resolvedType.Definition,
+											Node:         node,
 										}
 										s.VarValues[v] = trackedVal
 										initialVars = append(initialVars, v)
@@ -77,6 +79,7 @@ func (s *State) findInitialRouterVars() []*types.Var {
 	return initialVars
 }
 
+// findAndProcessUsages finds and processes the usages of a variable.
 func (s *State) findAndProcessUsages(v *types.Var) {
 	initialValue, ok := s.VarValues[v]
 	if !ok {
@@ -114,6 +117,7 @@ func (s *State) findAndProcessUsages(v *types.Var) {
 	}
 }
 
+// processMethodCall processes a method call.
 func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -166,7 +170,11 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 		newNode := &model.RouteNode{PathPrefix: pathPrefix, Parent: currentValue.Node}
 		currentValue.Node.Children = append(currentValue.Node.Children, newNode)
 		newVal := &TrackedValue{
-			Source: call, RouterDef: routerDef, Parent: currentValue, PathPrefix: pathPrefix, Node: newNode,
+			Source:      call,
+			RouterDef:   routerDef,
+			Parent:      currentValue,
+			PathPrefix:  pathPrefix,
+			Node:        newNode,
 		}
 
 		// If middleware is being applied, analyze it.

@@ -113,6 +113,8 @@ func getFuncPath(obj types.Object) string {
 	return fn.Pkg().Path() + "." + fn.Name()
 }
 
+// resolveIntValue attempts to resolve an expression to an integer value.
+// It supports basic literals and constant expressions.
 func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 	info := s.getInfoForNode(expr)
 	if info == nil {
@@ -150,7 +152,8 @@ func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 	return 0, false
 }
 
-// Add this new function to util.go
+// resolveStringValue attempts to resolve an expression to a string value.
+// It supports basic string literals, constant strings, and binary string concatenations.
 func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
 	switch e := expr.(type) {
 	case *ast.BasicLit:

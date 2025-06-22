@@ -64,6 +64,7 @@ securitySchemes:
 #     schemeName: "BearerAuth"
 `
 
+// main is the entry point for the respec command-line tool.
 func main() {
 	var outputPath string
 

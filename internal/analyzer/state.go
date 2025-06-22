@@ -94,7 +94,9 @@ type State struct {
 	Metadata MetadataMap
 }
 
+// NewState creates a new State instance.
 func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
+	// Create a map to store type information for each AST file.
 	fileInfoMap := make(map[*ast.File]*types.Info)
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {

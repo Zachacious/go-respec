@@ -8,55 +8,81 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SecurityPattern represents a security pattern.
 type SecurityPattern struct {
+	// FunctionPath is the path to the function.
 	FunctionPath string `yaml:"functionPath"`
-	SchemeName   string `yaml:"schemeName"`
+	// SchemeName is the name of the scheme.
+	SchemeName string `yaml:"schemeName"`
 }
 
+// ParameterPattern represents a parameter pattern.
 type ParameterPattern struct {
+	// FunctionPath is the path to the function.
 	FunctionPath string `yaml:"functionPath"`
-	NameIndex    int    `yaml:"nameIndex"`
+	// NameIndex is the index of the name.
+	NameIndex int `yaml:"nameIndex"`
 }
 
+// RequestBodyPattern represents a request body pattern.
 type RequestBodyPattern struct {
+	// FunctionPath is the path to the function.
 	FunctionPath string `yaml:"functionPath"`
-	ArgIndex     int    `yaml:"argIndex"`
+	// ArgIndex is the index of the argument.
+	ArgIndex int `yaml:"argIndex"`
 }
 
+// ResponseBodyPattern represents a response body pattern.
 type ResponseBodyPattern struct {
-	FunctionPath     string `yaml:"functionPath"`
-	DataIndex        int    `yaml:"dataIndex"`
-	StatusCodeIndex  *int   `yaml:"statusCodeIndex,omitempty"`
-	DescriptionIndex *int   `yaml:"descriptionIndex,omitempty"`
+	// FunctionPath is the path to the function.
+	FunctionPath string `yaml:"functionPath"`
+	// DataIndex is the index of the data.
+	DataIndex int `yaml:"dataIndex"`
+	// StatusCodeIndex is the index of the status code.
+	StatusCodeIndex *int `yaml:"statusCodeIndex,omitempty"`
+	// DescriptionIndex is the index of the description.
+	DescriptionIndex *int `yaml:"descriptionIndex,omitempty"`
 }
 
+// HandlerPatternsConfig represents a handler patterns configuration.
 type HandlerPatternsConfig struct {
-	RequestBody     []RequestBodyPattern  `yaml:"requestBody"`
-	ResponseBody    []ResponseBodyPattern `yaml:"responseBody"`
-	QueryParameter  []ParameterPattern    `yaml:"queryParameter"`
-	HeaderParameter []ParameterPattern    `yaml:"headerParameter"`
+	// RequestBody is a list of request body patterns.
+	RequestBody []RequestBodyPattern `yaml:"requestBody"`
+	// ResponseBody is a list of response body patterns.
+	ResponseBody []ResponseBodyPattern `yaml:"responseBody"`
+	// QueryParameter is a list of query parameter patterns.
+	QueryParameter []ParameterPattern `yaml:"queryParameter"`
+	// HeaderParameter is a list of header parameter patterns.
+	HeaderParameter []ParameterPattern `yaml:"headerParameter"`
 }
 
-// --- END OF NEW CONFIG STRUCTS ---
-
-// RouterDefinition is unchanged.
+// RouterDefinition represents a router definition.
 type RouterDefinition struct {
-	Type                     string   `yaml:"type"`
-	EndpointMethods          []string `yaml:"endpointMethods"`
-	GroupMethods             []string `yaml:"groupMethods"`
+	// Type is the type of the router.
+	Type string `yaml:"type"`
+	// EndpointMethods is a list of endpoint methods.
+	EndpointMethods []string `yaml:"endpointMethods"`
+	// GroupMethods is a list of group methods.
+	GroupMethods []string `yaml:"groupMethods"`
+	// MiddlewareWrapperMethods is a list of middleware wrapper methods.
 	MiddlewareWrapperMethods []string `yaml:"middlewareWrapperMethods"`
 }
 
-// Config is updated with the new HandlerPatterns.
+// Config represents a configuration.
 type Config struct {
-	Info              *openapi3.Info         `yaml:"info"`
-	SecuritySchemes   map[string]interface{} `yaml:"securitySchemes"`
-	RouterDefinitions []RouterDefinition     `yaml:"routerDefinitions"`
-	HandlerPatterns   *HandlerPatternsConfig `yaml:"handlerPatterns"`
-	SecurityPatterns  []SecurityPattern      `yaml:"securityPatterns"`
+	// Info is the information about the API.
+	Info *openapi3.Info `yaml:"info"`
+	// SecuritySchemes is a map of security schemes.
+	SecuritySchemes map[string]interface{} `yaml:"securitySchemes"`
+	// RouterDefinitions is a list of router definitions.
+	RouterDefinitions []RouterDefinition `yaml:"routerDefinitions"`
+	// HandlerPatterns is the handler patterns configuration.
+	HandlerPatterns *HandlerPatternsConfig `yaml:"handlerPatterns"`
+	// SecurityPatterns is a list of security patterns.
+	SecurityPatterns []SecurityPattern `yaml:"securityPatterns"`
 }
 
-// Load is updated with defaults for the new handler patterns.
+// Load loads a configuration from a file.
 func Load(projectPath string) (*Config, error) {
 	// Helper for making statusCodeIndex optional
 	intPtr := func(i int) *int { return &i }

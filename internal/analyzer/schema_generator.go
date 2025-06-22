@@ -15,6 +15,7 @@ type SchemaGenerator struct {
 	schemas map[types.Type]*openapi3.SchemaRef
 }
 
+// NewSchemaGenerator returns a new SchemaGenerator instance.
 func NewSchemaGenerator() *SchemaGenerator {
 	return &SchemaGenerator{
 		schemas: make(map[types.Type]*openapi3.SchemaRef),
@@ -69,14 +70,13 @@ func (sg *SchemaGenerator) buildSchema(t types.Type) *openapi3.Schema {
 	case *types.Map:
 		return openapi3.NewObjectSchema().WithAdditionalProperties(sg.GenerateSchema(u.Elem()).Value)
 	default:
-		// --- Start of fix for error 3 ---
 		schema := openapi3.NewObjectSchema()
 		schema.Description = fmt.Sprintf("Unsupported type: %T", u)
 		return schema
-		// --- End of fix ---
 	}
 }
 
+// schemaForBasic generates an OpenAPI schema for a basic type.
 func (sg *SchemaGenerator) schemaForBasic(b *types.Basic) *openapi3.Schema {
 	switch b.Kind() {
 	case types.String:
@@ -89,14 +89,13 @@ func (sg *SchemaGenerator) schemaForBasic(b *types.Basic) *openapi3.Schema {
 	case types.Float32, types.Float64:
 		return openapi3.NewFloat64Schema()
 	default:
-		// --- Start of fix for error 4 ---
 		schema := openapi3.NewStringSchema()
 		schema.Description = "Type " + b.Name()
 		return schema
-		// --- End of fix ---
 	}
 }
 
+// schemaForStruct generates an OpenAPI schema for a struct type.
 func (sg *SchemaGenerator) schemaForStruct(s *types.Struct) *openapi3.Schema {
 	schema := openapi3.NewObjectSchema()
 	for i := 0; i < s.NumFields(); i++ {

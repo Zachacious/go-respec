@@ -11,8 +11,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// buildRouteFromCall is the entry point for Phase 4. It's called by the data
-// flow engine when a route registration method call (a "sink") is found.
+// buildRouteFromCall is the entry point for Phase 4.
+// It's called by the data flow engine when a route registration method call (a "sink") is found.
 func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handlerDecl *ast.FuncDecl) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -39,7 +39,10 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 	}
 
 	op := &model.Operation{
-		HTTPMethod: httpMethod, FullPath: fullPath, GoHandler: handlerObj, HandlerName: handlerObj.Name(),
+		HTTPMethod:  httpMethod,
+		FullPath:    fullPath,
+		GoHandler:   handlerObj,
+		HandlerName: handlerObj.Name(),
 	}
 	if handlerObj.Pkg() != nil {
 		op.HandlerPackage = handlerObj.Pkg().Path()
@@ -59,7 +62,6 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 	for _, match := range matches {
 		if len(match) > 1 {
 			paramName := match[1]
-			// --- START OF NEW LOGIC ---
 			// Create a default string parameter first.
 			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
 			// Now, try to infer a more specific type from the handler body.
@@ -67,7 +69,6 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 				s.inferPathParameterType(handlerDecl.Body, param)
 			}
 			op.Spec.AddParameter(param)
-			// --- END OF NEW LOGIC ---
 		}
 	}
 }
@@ -164,39 +165,6 @@ func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Para
 		return true
 	})
 }
-
-// // resolveStringValue attempts to find the static string value of an expression.
-// // It can handle basic string literals and constants from the universe.
-// func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
-// 	switch e := expr.(type) {
-// 	case *ast.BasicLit:
-// 		if e.Kind == token.STRING {
-// 			val, err := strconv.Unquote(e.Value)
-// 			if err == nil {
-// 				return val, true
-// 			}
-// 		}
-// 	case *ast.Ident:
-// 		obj := s.getObjectForExpr(e)
-// 		if constObj, isConst := obj.(*types.Const); isConst {
-// 			// --- Start of fix ---
-// 			val, err := strconv.Unquote(constObj.Val().String())
-// 			if err == nil {
-// 				return val, true
-// 			}
-// 			// --- End of fix ---
-// 		}
-// 	case *ast.BinaryExpr:
-// 		if e.Op == token.ADD {
-// 			left, lok := s.resolveStringValue(e.X)
-// 			right, rok := s.resolveStringValue(e.Y)
-// 			if lok && rok {
-// 				return left + right, true
-// 			}
-// 		}
-// 	}
-// 	return "", false
-// }
 
 // assembleFullPath walks up the chain of tracked values to construct the
 // complete path for an endpoint, prepending all parent prefixes.

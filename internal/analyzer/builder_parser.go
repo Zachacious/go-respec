@@ -14,6 +14,8 @@ type MetadataMap map[*ast.CallExpr]*respec.Builder
 
 // FindAllMetadata is a new analysis phase that scans the entire project for
 // `respec.Route()` and `respec.Group()` calls and parses their chained methods.
+// 
+// This phase populates the Metadata map with builder metadata for each route registration call.
 func (s *State) FindAllMetadata() {
 	fmt.Println("Phase 2.5: Parsing builder metadata...")
 	s.Metadata = make(MetadataMap)
@@ -40,7 +42,6 @@ func (s *State) FindAllMetadata() {
 				}
 
 				// We found a chain. Parse it backwards from the end.
-				// FIX: Use the correct variable name 'callExpr' instead of 'call'.
 				builder, innerCall := parseBuilderChain(callExpr, info)
 				if builder != nil && innerCall != nil {
 					// We successfully parsed a chain. Store it in our map,
@@ -58,6 +59,8 @@ func (s *State) FindAllMetadata() {
 
 // parseBuilderChain walks a chain of calls like `respec.Route(...).Summary(...).Tag(...)` backwards.
 // It returns the fully populated Builder object and a pointer to the inner call expression.
+// 
+// This function assumes that the input call expression is a valid chain of method calls.
 func parseBuilderChain(endCall *ast.CallExpr, info *types.Info) (*respec.Builder, *ast.CallExpr) {
 	builder := respec.NewBuilder()
 	currentCall := endCall
@@ -89,12 +92,16 @@ func parseBuilderChain(endCall *ast.CallExpr, info *types.Info) (*respec.Builder
 		// Populate the builder based on the method name.
 		switch methodName {
 		case "Summary":
+			// Set the summary for the builder.
 			builder.Summary(argValue)
 		case "Description":
+			// Set the description for the builder.
 			builder.Description(argValue)
 		case "Tag":
+			// Add a tag to the builder.
 			builder.Tag(argValue) // Assumes single tag, can be extended for variadic
 		case "Security":
+			// Set the security for the builder.
 			builder.Security(argValue)
 		}
 

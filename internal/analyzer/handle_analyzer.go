@@ -13,16 +13,21 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// responseInfo holds information about a response.
 type responseInfo struct {
-	Type        types.Type
+	// Type is the type of the response body.
+	Type types.Type
+	// Description is a description of the response.
 	Description string
 }
 
+// analyzeHandlers analyzes handlers and generates schemas.
 func (s *State) analyzeHandlers() {
 	fmt.Println("Phase 5: Analyzing handlers and generating schemas...")
 	s.traverseAndAnalyze(s.RouteGraph)
 }
 
+// traverseAndAnalyze traverses the route graph and analyzes each handler.
 func (s *State) traverseAndAnalyze(node *model.RouteNode) {
 	for _, op := range node.Operations {
 		s.analyzeHandlerBody(op)
@@ -32,7 +37,7 @@ func (s *State) traverseAndAnalyze(node *model.RouteNode) {
 	}
 }
 
-// analyzeHandlerBody is updated to include header parameter detection.
+// analyzeHandlerBody analyzes the body of a handler.
 func (s *State) analyzeHandlerBody(op *model.Operation) {
 	if op.Spec == nil {
 		op.Spec = openapi3.NewOperation()
@@ -111,7 +116,7 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 	}
 }
 
-// findParametersByPattern is a generic function to find parameters based on configured patterns.
+// findParametersByPattern finds parameters based on a given pattern.
 func (s *State) findParametersByPattern(body *ast.BlockStmt, patterns []config.ParameterPattern, in string, exclusions map[string]bool) []*openapi3.ParameterRef {
 	var params []*openapi3.ParameterRef
 	foundParams := make(map[string]bool)
@@ -140,7 +145,6 @@ func (s *State) findParametersByPattern(body *ast.BlockStmt, patterns []config.P
 			return true
 		}
 
-		// --- START OF FIX ---
 		// Before asserting the type, we must check it. An object could be a
 		// function (*types.Func) or a variable that holds a function (*types.Var).
 		var funcSignature *types.Signature
@@ -157,7 +161,6 @@ func (s *State) findParametersByPattern(body *ast.BlockStmt, patterns []config.P
 		if !isSignature {
 			return true
 		}
-		// --- END OF FIX ---
 
 		var funcPath string
 		if recv := funcSignature.Recv(); recv != nil {
@@ -201,6 +204,7 @@ func (s *State) findParametersByPattern(body *ast.BlockStmt, patterns []config.P
 	return params
 }
 
+// findRequestSchema finds the request schema for a handler.
 func (s *State) findRequestSchema(body *ast.BlockStmt, patterns []config.RequestBodyPattern) types.Type {
 	var reqType types.Type
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -240,95 +244,7 @@ func (s *State) findRequestSchema(body *ast.BlockStmt, patterns []config.Request
 	return reqType
 }
 
-// func (s *State) findQueryParameters(body *ast.BlockStmt, pathParams map[string]bool) []*openapi3.ParameterRef {
-// 	var params []*openapi3.ParameterRef
-// 	foundParams := make(map[string]bool)
-// 	ast.Inspect(body, func(n ast.Node) bool {
-// 		call, ok := n.(*ast.CallExpr)
-// 		if !ok {
-// 			return true
-// 		}
-// 		sel, ok := call.Fun.(*ast.SelectorExpr)
-// 		if !ok || sel.Sel.Name != "Get" {
-// 			return true
-// 		}
-// 		prevCall, ok := sel.X.(*ast.CallExpr)
-// 		if !ok || len(prevCall.Args) != 0 {
-// 			return true
-// 		}
-// 		querySel, ok := prevCall.Fun.(*ast.SelectorExpr)
-// 		if !ok || querySel.Sel.Name != "Query" {
-// 			return true
-// 		}
-// 		urlSel, ok := querySel.X.(*ast.SelectorExpr)
-// 		if !ok || urlSel.Sel.Name != "URL" {
-// 			return true
-// 		}
-// 		if len(call.Args) == 1 {
-// 			if key, ok := call.Args[0].(*ast.BasicLit); ok && key.Kind == token.STRING {
-// 				paramName, err := strconv.Unquote(key.Value)
-// 				if err != nil {
-// 					return true
-// 				}
-// 				if !foundParams[paramName] && !pathParams[paramName] {
-// 					param := openapi3.NewQueryParameter(paramName).
-// 						WithSchema(openapi3.NewStringSchema())
-// 					params = append(params, &openapi3.ParameterRef{Value: param})
-// 					foundParams[paramName] = true
-// 				}
-// 			}
-// 		}
-// 		return true
-// 	})
-// 	return params
-// }
-
-// // findHeaderParameters scans a function body for calls to r.Header.Get("Header-Name")
-// // and creates parameter definitions for them.
-// func (s *State) findHeaderParameters(body *ast.BlockStmt) []*openapi3.ParameterRef {
-// 	var params []*openapi3.ParameterRef
-// 	foundParams := make(map[string]bool)
-
-// 	ast.Inspect(body, func(n ast.Node) bool {
-// 		call, ok := n.(*ast.CallExpr)
-// 		if !ok {
-// 			return true
-// 		}
-
-// 		// Look for the pattern: r.Header.Get("...")
-// 		sel, ok := call.Fun.(*ast.SelectorExpr)
-// 		if !ok || sel.Sel.Name != "Get" {
-// 			return true
-// 		}
-
-// 		// Check if the receiver of ".Get" is ".Header"
-// 		headerSel, ok := sel.X.(*ast.SelectorExpr)
-// 		if !ok || headerSel.Sel.Name != "Header" {
-// 			return true
-// 		}
-
-// 		// We found the r.Header.Get("...") pattern.
-// 		// Get the parameter name from the argument to .Get()
-// 		if len(call.Args) == 1 {
-// 			if key, ok := call.Args[0].(*ast.BasicLit); ok && key.Kind == token.STRING {
-// 				paramName, err := strconv.Unquote(key.Value)
-// 				if err != nil {
-// 					return true
-// 				}
-
-// 				if !foundParams[paramName] {
-// 					param := openapi3.NewHeaderParameter(paramName).
-// 						WithSchema(openapi3.NewStringSchema())
-// 					params = append(params, &openapi3.ParameterRef{Value: param})
-// 					foundParams[paramName] = true
-// 				}
-// 			}
-// 		}
-// 		return true
-// 	})
-// 	return params
-// }
-
+// findResponseSchemas finds response schemas for a handler.
 func (s *State) findResponseSchemas(body *ast.BlockStmt, patterns []config.ResponseBodyPattern) map[int]responseInfo {
 	responses := make(map[int]responseInfo)
 	lastStatusCode := 200
