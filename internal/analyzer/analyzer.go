@@ -31,6 +31,7 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 		return nil, err
 	}
 	state.discoverUniverse()
+	state.FindAllMetadata()
 	state.performDataFlowAnalysis()
 	state.analyzeHandlers()
 

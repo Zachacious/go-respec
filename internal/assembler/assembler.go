@@ -56,21 +56,107 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 	return spec, nil
 }
 
+// // addRoutesToSpec is a recursive helper that traverses the RouteNode graph
+// // and adds all found operations to the specification's Paths object.
+// func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
+// 	// Process operations at the current node
+// 	for _, op := range node.Operations {
+// 		// FIX: Use the library's intended methods for the Paths struct.
+// 		pathItem := spec.Paths.Find(op.FullPath)
+// 		if pathItem == nil {
+// 			pathItem = &openapi3.PathItem{}
+// 			// Use the Set method to add the new PathItem.
+// 			spec.Paths.Set(op.FullPath, pathItem)
+// 		}
+
+// 		// Use the SetOperation method to attach the operation.
+// 		pathItem.SetOperation(strings.ToUpper(op.HTTPMethod), op.Spec)
+
+// 		// Collect security schemes by walking up the parent chain
+// 		var securityRequirements []map[string][]string
+// 		for n := node; n != nil; n = n.Parent {
+// 			for _, schemeName := range n.InferredSecurity {
+// 				// Add the security requirement for this scheme
+// 				securityRequirements = append(securityRequirements, map[string][]string{
+// 					schemeName: {},
+// 				})
+// 			}
+// 		}
+// 		if len(securityRequirements) > 0 {
+// 			op.Spec.Security = &openapi3.SecurityRequirements{
+// 				securityRequirements[0], // Simplified for now, just takes the first one found
+// 			}
+// 		}
+// 	}
+
+// 	// Recurse into child nodes
+// 	for _, child := range node.Children {
+// 		addRoutesToSpec(spec, child)
+// 	}
+// }
+
 // addRoutesToSpec is a recursive helper that traverses the RouteNode graph
 // and adds all found operations to the specification's Paths object.
 func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 	// Process operations at the current node
 	for _, op := range node.Operations {
-		// FIX: Use the library's intended methods for the Paths struct.
+		// Get the operation spec that was populated by the inference engine.
+		operationSpec := op.Spec
+
+		// --- START: Layer 2/3 - Inferred Security from Middleware ---
+		// Collect security schemes by walking up the parent chain.
+		var securityRequirements []map[string][]string
+		for n := node; n != nil; n = n.Parent {
+			for _, schemeName := range n.InferredSecurity {
+				securityRequirements = append(securityRequirements, map[string][]string{
+					schemeName: {},
+				})
+			}
+		}
+		if len(securityRequirements) > 0 {
+			// Apply the inferred security. This can be overridden by the builder below.
+			operationSpec.Security = &openapi3.SecurityRequirements{
+				securityRequirements[0], // Simplified for now, just takes the first one found
+			}
+		}
+		// --- END: Inferred Security from Middleware ---
+
+		// --- START: Layer 1 - Explicit Overrides from Metadata Builder ---
+		// If metadata from a respec.Route() wrapper exists, it has the highest
+		// priority and will override any inferred or doc comment values.
+		if op.BuilderMetadata != nil {
+			meta := op.BuilderMetadata
+			if s := meta.GetSummary(); s != "" {
+				operationSpec.Summary = s
+			}
+			if d := meta.GetDescription(); d != "" {
+				operationSpec.Description = d
+			}
+			if t := meta.GetTags(); len(t) > 0 {
+				operationSpec.Tags = t
+			}
+			if schemes := meta.GetSecurity(); len(schemes) > 0 {
+				// This creates a new security requirement based on the names
+				// provided to the builder, e.g., .Security("BearerAuth")
+				req := openapi3.SecurityRequirement{}
+				for _, schemeName := range schemes {
+					req[schemeName] = []string{}
+				}
+				// This OVERWRITES any security that was inferred from middleware.
+				operationSpec.Security = &openapi3.SecurityRequirements{req}
+			}
+		}
+		// --- END: Explicit Overrides ---
+
+		// Find or create the PathItem for this route.
 		pathItem := spec.Paths.Find(op.FullPath)
 		if pathItem == nil {
 			pathItem = &openapi3.PathItem{}
-			// Use the Set method to add the new PathItem.
 			spec.Paths.Set(op.FullPath, pathItem)
 		}
 
-		// Use the SetOperation method to attach the operation.
-		pathItem.SetOperation(strings.ToUpper(op.HTTPMethod), op.Spec)
+		// Use the SetOperation method to attach the final, combined operation spec.
+		pathItem.SetOperation(strings.ToUpper(op.HTTPMethod), operationSpec)
 	}
 
 	// Recurse into child nodes

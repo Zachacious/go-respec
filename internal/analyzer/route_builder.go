@@ -2,7 +2,6 @@ package analyzer
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 	"regexp"
 	"strconv"
@@ -14,32 +13,27 @@ import (
 
 // buildRouteFromCall is the entry point for Phase 4. It's called by the data
 // flow engine when a route registration method call (a "sink") is found.
-func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr) {
+func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handlerDecl *ast.FuncDecl) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
-
 	httpMethod := strings.ToUpper(selExpr.Sel.Name)
 	if len(call.Args) < 2 {
 		return
 	}
-
 	pathArg := call.Args[0]
 	path, ok := s.resolveStringValue(pathArg)
 	if !ok {
 		return
 	}
 
-	// Assemble the full path and normalize it
 	fullPath := s.assembleFullPath(val, path)
-	// FIX: Remove trailing slash if it's not the root path
 	if len(fullPath) > 1 && strings.HasSuffix(fullPath, "/") {
 		fullPath = fullPath[:len(fullPath)-1]
 	}
 
-	handlerArg := call.Args[1]
-	handlerObj := s.getObjectForExpr(handlerArg)
+	handlerObj := s.getObjectForExpr(call.Args[1])
 	if handlerObj == nil {
 		return
 	}
@@ -51,55 +45,158 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr) {
 		op.HandlerPackage = handlerObj.Pkg().Path()
 	}
 
-	// This is now an operation on a specific node.
+	if metadata, ok := s.Metadata[call]; ok {
+		op.BuilderMetadata = metadata
+	}
+
 	routeNode := val.Node
 	routeNode.Operations = append(routeNode.Operations, op)
+	op.Spec = openapi3.NewOperation()
 
-	// --- NEW: Auto-detect path parameters ---
-	op.Spec = openapi3.NewOperation() // Init the spec object
+	// Auto-detect path parameters
 	re := regexp.MustCompile(`\{(\w+)\}`)
 	matches := re.FindAllStringSubmatch(fullPath, -1)
 	for _, match := range matches {
 		if len(match) > 1 {
 			paramName := match[1]
+			// --- START OF NEW LOGIC ---
+			// Create a default string parameter first.
 			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
+			// Now, try to infer a more specific type from the handler body.
+			if handlerDecl != nil && handlerDecl.Body != nil {
+				s.inferPathParameterType(handlerDecl.Body, param)
+			}
 			op.Spec.AddParameter(param)
+			// --- END OF NEW LOGIC ---
 		}
 	}
 }
 
-// resolveStringValue attempts to find the static string value of an expression.
-// It can handle basic string literals and constants from the universe.
-func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		if e.Kind == token.STRING {
-			val, err := strconv.Unquote(e.Value)
-			if err == nil {
-				return val, true
+// inferPathParameterType scans a handler body to infer a more specific schema for a path parameter.
+func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Parameter) {
+	var paramVarObj types.Object
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) == 0 || len(assign.Rhs) != 1 {
+			return true
+		}
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		selExpr, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		info := s.getInfoForNode(selExpr.Sel)
+		if info == nil {
+			return true
+		}
+
+		// FIX: Use the new getFuncPath helper.
+		if funObj := info.Uses[selExpr.Sel]; funObj != nil && getFuncPath(funObj) == "github.com/go-chi/chi/v5.URLParam" {
+			if len(call.Args) == 2 {
+				if nameLit, ok := call.Args[1].(*ast.BasicLit); ok {
+					if name, err := strconv.Unquote(nameLit.Value); err == nil && name == param.Name {
+						if ident, ok := assign.Lhs[0].(*ast.Ident); ok {
+							paramVarObj = s.getInfoForNode(ident).Defs[ident]
+							return false // Stop searching
+						}
+					}
+				}
 			}
 		}
-	case *ast.Ident:
-		obj := s.getObjectForExpr(e)
-		if constObj, isConst := obj.(*types.Const); isConst {
-			// --- Start of fix ---
-			val, err := strconv.Unquote(constObj.Val().String())
-			if err == nil {
-				return val, true
-			}
-			// --- End of fix ---
-		}
-	case *ast.BinaryExpr:
-		if e.Op == token.ADD {
-			left, lok := s.resolveStringValue(e.X)
-			right, rok := s.resolveStringValue(e.Y)
-			if lok && rok {
-				return left + right, true
-			}
-		}
+		return true
+	})
+
+	if paramVarObj == nil {
+		return
 	}
-	return "", false
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		ident, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		info := s.getInfoForNode(ident)
+		if info == nil || info.Uses[ident] != paramVarObj {
+			return true
+		}
+
+		path, _ := s.findPathToNode(ident)
+		if len(path) < 2 {
+			return true
+		}
+
+		if call, ok := path[1].(*ast.CallExpr); ok {
+			funInfo := s.getInfoForNode(call.Fun)
+			if funInfo == nil {
+				return true
+			}
+
+			var funObj types.Object
+			if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel {
+				funObj = funInfo.Uses[sel.Sel]
+			} else if funIdent, isIdent := call.Fun.(*ast.Ident); isIdent {
+				funObj = funInfo.Uses[funIdent]
+			}
+
+			if funObj != nil {
+				// FIX: Use the new getFuncPath helper.
+				switch getFuncPath(funObj) {
+				case "strconv.Atoi", "strconv.ParseInt":
+					param.Schema.Value.Type = &openapi3.Types{"integer"}
+					return false // Type found, stop searching.
+				case "strconv.ParseFloat":
+					param.Schema.Value.Type = &openapi3.Types{"number"}
+					param.Schema.Value.Format = "double"
+					return false
+				case "github.com/google/uuid.Parse":
+					param.Schema.Value.Format = "uuid"
+					return false
+				}
+			}
+		}
+		return true
+	})
 }
+
+// // resolveStringValue attempts to find the static string value of an expression.
+// // It can handle basic string literals and constants from the universe.
+// func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
+// 	switch e := expr.(type) {
+// 	case *ast.BasicLit:
+// 		if e.Kind == token.STRING {
+// 			val, err := strconv.Unquote(e.Value)
+// 			if err == nil {
+// 				return val, true
+// 			}
+// 		}
+// 	case *ast.Ident:
+// 		obj := s.getObjectForExpr(e)
+// 		if constObj, isConst := obj.(*types.Const); isConst {
+// 			// --- Start of fix ---
+// 			val, err := strconv.Unquote(constObj.Val().String())
+// 			if err == nil {
+// 				return val, true
+// 			}
+// 			// --- End of fix ---
+// 		}
+// 	case *ast.BinaryExpr:
+// 		if e.Op == token.ADD {
+// 			left, lok := s.resolveStringValue(e.X)
+// 			right, rok := s.resolveStringValue(e.Y)
+// 			if lok && rok {
+// 				return left + right, true
+// 			}
+// 		}
+// 	}
+// 	return "", false
+// }
 
 // assembleFullPath walks up the chain of tracked values to construct the
 // complete path for an endpoint, prepending all parent prefixes.

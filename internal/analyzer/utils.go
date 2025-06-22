@@ -2,7 +2,10 @@ package analyzer
 
 import (
 	"go/ast"
+	"go/constant"
+	"go/token"
 	"go/types"
+	"strconv"
 
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -81,4 +84,98 @@ func (s *State) getObjectForExpr(expr ast.Expr) types.Object {
 		}
 	}
 	return nil
+}
+
+// getFuncPath constructs a fully qualified path for a function object.
+// e.g., "net/http.ResponseWriter.Write" or "strconv.Atoi"
+func getFuncPath(obj types.Object) string {
+	if obj == nil {
+		return ""
+	}
+
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		// Not a function object, so it has no function path.
+		return ""
+	}
+
+	// Check if it's a method by looking for a receiver.
+	if sig := fn.Type().(*types.Signature); sig != nil && sig.Recv() != nil {
+		// It's a method. The full name includes the receiver type.
+		// sig.Recv().Type().String() correctly gives us the full type name, e.g., "*github.com/go-chi/chi/v5.Mux"
+		return sig.Recv().Type().String() + "." + fn.Name()
+	}
+
+	// It's a regular function.
+	if fn.Pkg() == nil {
+		return ""
+	}
+	return fn.Pkg().Path() + "." + fn.Name()
+}
+
+func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
+	info := s.getInfoForNode(expr)
+	if info == nil {
+		return 0, false
+	}
+
+	// Case 1: It's a basic literal number, e.g., 201
+	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
+		if val, err := strconv.Atoi(lit.Value); err == nil {
+			return val, true
+		}
+	}
+
+	// Case 2: It's an identifier for a constant, e.g., http.StatusOK
+	if ident, ok := expr.(*ast.Ident); ok {
+		if obj := info.Uses[ident]; obj != nil {
+			if c, ok := obj.(*types.Const); ok {
+				if val, exact := constant.Int64Val(c.Val()); exact {
+					return int(val), true
+				}
+			}
+		}
+	}
+	// Case 3: It's a selector for a constant, e.g. http.StatusOK
+	if sel, ok := expr.(*ast.SelectorExpr); ok {
+		if obj := info.Uses[sel.Sel]; obj != nil {
+			if c, ok := obj.(*types.Const); ok {
+				if val, exact := constant.Int64Val(c.Val()); exact {
+					return int(val), true
+				}
+			}
+		}
+	}
+
+	return 0, false
+}
+
+// Add this new function to util.go
+func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			val, err := strconv.Unquote(e.Value)
+			if err == nil {
+				return val, true
+			}
+		}
+	case *ast.Ident:
+		obj := s.getObjectForExpr(e)
+		if constObj, isConst := obj.(*types.Const); isConst {
+			val, err := strconv.Unquote(constObj.Val().String())
+			if err == nil {
+				return val, true
+			}
+		}
+	case *ast.BinaryExpr:
+		if e.Op == token.ADD {
+			left, lok := s.resolveStringValue(e.X)
+			right, rok := s.resolveStringValue(e.Y)
+			if lok && rok {
+				return left + right, true
+			}
+		}
+	}
+	return "", false
 }

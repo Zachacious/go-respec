@@ -1,4 +1,6 @@
-# respec: Analyze Go code, generate OpenAPI specs
+![Go Reference](images/respec.jpg)
+
+# RESPEC: Generate OpenAPI v3 Specifications from Go Code
 
 respec generates OpenAPI v3 specifications from Go source code by statically analyzing your project. It works without code annotations by inferring API structures directly from your router definitions and handler implementations.
 

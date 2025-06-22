@@ -32,9 +32,20 @@ func (sg *SchemaGenerator) GenerateSchema(t types.Type) *openapi3.SchemaRef {
 		return ref
 	}
 
-	typeName := t.String()
-	if named, ok := t.(*types.Named); ok {
+	var typeName string
+	// Get the underlying named type, stripping away pointers to get the clean name.
+	currentType := t
+	if ptr, isPtr := currentType.(*types.Pointer); isPtr {
+		currentType = ptr.Elem()
+	}
+	if named, isNamed := currentType.(*types.Named); isNamed {
 		typeName = named.Obj().Name()
+	}
+
+	// If we couldn't get a clean name (e.g., for an anonymous struct),
+	// fall back to the full string representation.
+	if typeName == "" {
+		typeName = t.String()
 	}
 
 	schemaRef := &openapi3.SchemaRef{Ref: "#/components/schemas/" + typeName}

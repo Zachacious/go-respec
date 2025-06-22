@@ -88,6 +88,10 @@ type State struct {
 	// --- Schema Generation State ---
 	// The schema generator instance.
 	SchemaGen *SchemaGenerator
+
+	Config *config.Config
+
+	Metadata MetadataMap
 }
 
 func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
@@ -113,6 +117,8 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 		processed:   make(map[ast.Node]bool),
 		RouteGraph:  &model.RouteNode{PathPrefix: "/"},
 		SchemaGen:   NewSchemaGenerator(),
+		Config:      cfg,
+		Metadata:    make(MetadataMap),
 	}
 
 	// Immediately run the resolver to populate our type map.

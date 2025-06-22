@@ -22,6 +22,8 @@ type RouteNode struct {
 	Parent     *RouteNode
 	Children   []*RouteNode
 	Operations []*Operation
+	// Holds the names of security schemes inferred from middleware
+	InferredSecurity []string
 }
 
 // Operation represents a single API endpoint (e.g., GET /users/{id}).

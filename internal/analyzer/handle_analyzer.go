@@ -3,15 +3,21 @@ package analyzer
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
+	"net/http"
 	"strconv"
 
+	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// analyzeHandlers is the entry point for Phase 5.
-// It traverses the completed route graph and analyzes each handler.
+type responseInfo struct {
+	Type        types.Type
+	Description string
+}
+
 func (s *State) analyzeHandlers() {
 	fmt.Println("Phase 5: Analyzing handlers and generating schemas...")
 	s.traverseAndAnalyze(s.RouteGraph)
@@ -26,12 +32,11 @@ func (s *State) traverseAndAnalyze(node *model.RouteNode) {
 	}
 }
 
-// analyzeHandlerBody finds the AST for a handler and inspects its body.
+// analyzeHandlerBody is updated to include header parameter detection.
 func (s *State) analyzeHandlerBody(op *model.Operation) {
 	if op.Spec == nil {
 		op.Spec = openapi3.NewOperation()
 	}
-	// NOTE: openapi3.NewOperation() initializes the Responses field, so we don't use make().
 
 	funcDecl, ok := s.Universe.Functions[op.GoHandler]
 	if !ok {
@@ -51,32 +56,152 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		op.Spec.Summary = op.HandlerName
 	}
 
-	reqType := s.findRequestSchema(funcDecl.Body)
+	reqType := s.findRequestSchema(funcDecl.Body, s.Config.HandlerPatterns.RequestBody)
 	if reqType != nil {
 		schemaRef := s.SchemaGen.GenerateSchema(reqType)
-		reqBody := openapi3.NewRequestBody().WithContent(
-			openapi3.NewContentWithJSONSchemaRef(schemaRef),
-		)
+		reqBody := openapi3.NewRequestBody().WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
 		op.Spec.RequestBody = &openapi3.RequestBodyRef{Value: reqBody}
 	}
 
-	respType, statusCode := s.findResponseSchema(funcDecl.Body)
-	if respType != nil {
-		schemaRef := s.SchemaGen.GenerateSchema(respType)
-		response := openapi3.NewResponse().WithDescription("Success").WithContent(
-			openapi3.NewContentWithJSONSchemaRef(schemaRef),
-		)
+	pathParamNames := make(map[string]bool)
+	for _, p := range op.Spec.Parameters {
+		if p.Value != nil && p.Value.In == "path" {
+			pathParamNames[p.Value.Name] = true
+		}
+	}
+	queryParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.QueryParameter, "query", pathParamNames)
+	headerParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.HeaderParameter, "header", nil)
+
+	for _, p := range queryParams {
+		op.Spec.AddParameter(p.Value)
+	}
+	for _, p := range headerParams {
+		op.Spec.AddParameter(p.Value)
+	}
+
+	responses := s.findResponseSchemas(funcDecl.Body, s.Config.HandlerPatterns.ResponseBody)
+	for statusCode, info := range responses {
+		var schemaRef *openapi3.SchemaRef
+		if info.Type != nil {
+			schemaRef = s.SchemaGen.GenerateSchema(info.Type)
+		}
+
+		// Prioritize the specific description we inferred from the code.
+		desc := info.Description
+		// If a specific description was not found, use the standard HTTP status text.
+		if desc == "" {
+			desc = http.StatusText(statusCode)
+			// Fallback for non-standard codes.
+			if desc == "" {
+				desc = "Response"
+			}
+		}
+
+		response := openapi3.NewResponse().WithDescription(desc)
+
+		// A 204 response MUST NOT have a body.
+		if statusCode != 204 && schemaRef != nil {
+			response.WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
+		}
 		op.Spec.AddResponse(statusCode, response)
 	}
 
-	// FIX: Use the .Map() method to check the length of the responses.
 	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
 		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
 	}
 }
 
-// findRequestSchema scans a function body for patterns like `json.Decode(&v)`.
-func (s *State) findRequestSchema(body *ast.BlockStmt) types.Type {
+// findParametersByPattern is a generic function to find parameters based on configured patterns.
+func (s *State) findParametersByPattern(body *ast.BlockStmt, patterns []config.ParameterPattern, in string, exclusions map[string]bool) []*openapi3.ParameterRef {
+	var params []*openapi3.ParameterRef
+	foundParams := make(map[string]bool)
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		info := s.getInfoForNode(call.Fun)
+		if info == nil {
+			return true
+		}
+
+		var obj types.Object
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			obj = info.Uses[fun.Sel]
+		case *ast.Ident:
+			obj = info.Uses[fun]
+		default:
+			return true
+		}
+		if obj == nil {
+			return true
+		}
+
+		// --- START OF FIX ---
+		// Before asserting the type, we must check it. An object could be a
+		// function (*types.Func) or a variable that holds a function (*types.Var).
+		var funcSignature *types.Signature
+		var isSignature bool
+
+		if fn, ok := obj.(*types.Func); ok {
+			funcSignature, isSignature = fn.Type().(*types.Signature)
+		} else if v, ok := obj.(*types.Var); ok {
+			// If it's a variable, its underlying type might be a function signature
+			funcSignature, isSignature = v.Type().Underlying().(*types.Signature)
+		}
+
+		// If we didn't find a function signature, we can't proceed with this object.
+		if !isSignature {
+			return true
+		}
+		// --- END OF FIX ---
+
+		var funcPath string
+		if recv := funcSignature.Recv(); recv != nil {
+			funcPath = recv.Type().String() + "." + obj.Name()
+		} else if obj.Pkg() != nil {
+			funcPath = obj.Pkg().Path() + "." + obj.Name()
+		} else {
+			return true
+		}
+
+		for _, p := range patterns {
+			if funcPath == p.FunctionPath {
+				if len(call.Args) > p.NameIndex {
+					arg := call.Args[p.NameIndex]
+					if key, ok := arg.(*ast.BasicLit); ok && key.Kind == token.STRING {
+						paramName, err := strconv.Unquote(key.Value)
+						if err != nil {
+							return true
+						}
+
+						if !foundParams[paramName] && (exclusions == nil || !exclusions[paramName]) {
+							var param *openapi3.Parameter
+							switch in {
+							case "query":
+								param = openapi3.NewQueryParameter(paramName)
+							case "header":
+								param = openapi3.NewHeaderParameter(paramName)
+							default:
+								return true
+							}
+							param.WithSchema(openapi3.NewStringSchema())
+							params = append(params, &openapi3.ParameterRef{Value: param})
+							foundParams[paramName] = true
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return params
+}
+
+func (s *State) findRequestSchema(body *ast.BlockStmt, patterns []config.RequestBodyPattern) types.Type {
 	var reqType types.Type
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -84,18 +209,27 @@ func (s *State) findRequestSchema(body *ast.BlockStmt) types.Type {
 			return true
 		}
 
-		// Look for a method call named "Decode"
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Decode" {
-			if len(call.Args) == 1 {
-				// The argument to Decode is the variable we want the type of.
-				arg := call.Args[0]
-				info := s.getInfoForNode(arg)
-				if info != nil {
-					// The type is typically a pointer to the struct, so we get the element type.
-					if tv, ok := info.Types[arg]; ok {
-						if ptr, isPtr := tv.Type.(*types.Pointer); isPtr {
-							reqType = ptr.Elem()
-							return false // Stop searching
+		info := s.getInfoForNode(call.Fun)
+		if info == nil {
+			return true
+		}
+
+		obj := s.getObjectForExpr(call.Fun)
+		if obj == nil {
+			return true
+		}
+
+		funcPath := getFuncPath(obj)
+		for _, p := range patterns {
+			if funcPath == p.FunctionPath {
+				if len(call.Args) > p.ArgIndex {
+					arg := call.Args[p.ArgIndex]
+					if info := s.getInfoForNode(arg); info != nil {
+						if tv, ok := info.Types[arg]; ok {
+							if ptr, isPtr := tv.Type.(*types.Pointer); isPtr {
+								reqType = ptr.Elem()
+								return false // Stop searching
+							}
 						}
 					}
 				}
@@ -106,45 +240,165 @@ func (s *State) findRequestSchema(body *ast.BlockStmt) types.Type {
 	return reqType
 }
 
-// findResponseSchema scans for `c.JSON(200, data)` or `json.Encode(data)`.
-func (s *State) findResponseSchema(body *ast.BlockStmt) (types.Type, int) {
-	var respType types.Type
-	statusCode := 200 // Default success code
+// func (s *State) findQueryParameters(body *ast.BlockStmt, pathParams map[string]bool) []*openapi3.ParameterRef {
+// 	var params []*openapi3.ParameterRef
+// 	foundParams := make(map[string]bool)
+// 	ast.Inspect(body, func(n ast.Node) bool {
+// 		call, ok := n.(*ast.CallExpr)
+// 		if !ok {
+// 			return true
+// 		}
+// 		sel, ok := call.Fun.(*ast.SelectorExpr)
+// 		if !ok || sel.Sel.Name != "Get" {
+// 			return true
+// 		}
+// 		prevCall, ok := sel.X.(*ast.CallExpr)
+// 		if !ok || len(prevCall.Args) != 0 {
+// 			return true
+// 		}
+// 		querySel, ok := prevCall.Fun.(*ast.SelectorExpr)
+// 		if !ok || querySel.Sel.Name != "Query" {
+// 			return true
+// 		}
+// 		urlSel, ok := querySel.X.(*ast.SelectorExpr)
+// 		if !ok || urlSel.Sel.Name != "URL" {
+// 			return true
+// 		}
+// 		if len(call.Args) == 1 {
+// 			if key, ok := call.Args[0].(*ast.BasicLit); ok && key.Kind == token.STRING {
+// 				paramName, err := strconv.Unquote(key.Value)
+// 				if err != nil {
+// 					return true
+// 				}
+// 				if !foundParams[paramName] && !pathParams[paramName] {
+// 					param := openapi3.NewQueryParameter(paramName).
+// 						WithSchema(openapi3.NewStringSchema())
+// 					params = append(params, &openapi3.ParameterRef{Value: param})
+// 					foundParams[paramName] = true
+// 				}
+// 			}
+// 		}
+// 		return true
+// 	})
+// 	return params
+// }
+
+// // findHeaderParameters scans a function body for calls to r.Header.Get("Header-Name")
+// // and creates parameter definitions for them.
+// func (s *State) findHeaderParameters(body *ast.BlockStmt) []*openapi3.ParameterRef {
+// 	var params []*openapi3.ParameterRef
+// 	foundParams := make(map[string]bool)
+
+// 	ast.Inspect(body, func(n ast.Node) bool {
+// 		call, ok := n.(*ast.CallExpr)
+// 		if !ok {
+// 			return true
+// 		}
+
+// 		// Look for the pattern: r.Header.Get("...")
+// 		sel, ok := call.Fun.(*ast.SelectorExpr)
+// 		if !ok || sel.Sel.Name != "Get" {
+// 			return true
+// 		}
+
+// 		// Check if the receiver of ".Get" is ".Header"
+// 		headerSel, ok := sel.X.(*ast.SelectorExpr)
+// 		if !ok || headerSel.Sel.Name != "Header" {
+// 			return true
+// 		}
+
+// 		// We found the r.Header.Get("...") pattern.
+// 		// Get the parameter name from the argument to .Get()
+// 		if len(call.Args) == 1 {
+// 			if key, ok := call.Args[0].(*ast.BasicLit); ok && key.Kind == token.STRING {
+// 				paramName, err := strconv.Unquote(key.Value)
+// 				if err != nil {
+// 					return true
+// 				}
+
+// 				if !foundParams[paramName] {
+// 					param := openapi3.NewHeaderParameter(paramName).
+// 						WithSchema(openapi3.NewStringSchema())
+// 					params = append(params, &openapi3.ParameterRef{Value: param})
+// 					foundParams[paramName] = true
+// 				}
+// 			}
+// 		}
+// 		return true
+// 	})
+// 	return params
+// }
+
+func (s *State) findResponseSchemas(body *ast.BlockStmt, patterns []config.ResponseBodyPattern) map[int]responseInfo {
+	responses := make(map[int]responseInfo)
+	lastStatusCode := 200
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		// Look for common response methods
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			// Gin-like: c.JSON(200, data)
-			if sel.Sel.Name == "JSON" && len(call.Args) == 2 {
-				// Get status code from first arg
-				if codeLit, ok := call.Args[0].(*ast.BasicLit); ok {
-					if sc, err := strconv.Atoi(codeLit.Value); err == nil {
+
+		info := s.getInfoForNode(call.Fun)
+		if info == nil {
+			return true
+		}
+
+		obj := s.getObjectForExpr(call.Fun)
+		if obj == nil {
+			return true
+		}
+		funcPath := getFuncPath(obj)
+
+		// Built-in "Magic"
+		if funcPath == "net/http.ResponseWriter.WriteHeader" && len(call.Args) == 1 {
+			if sc, ok := s.resolveIntValue(call.Args[0]); ok {
+				lastStatusCode = sc
+				// If this is a 204, log it immediately as it has no body.
+				if sc == 204 {
+					responses[sc] = responseInfo{Description: "No Content"}
+				}
+			}
+		} else if funcPath == "encoding/json.Encoder.Encode" && len(call.Args) == 1 {
+			if tv, ok := info.Types[call.Args[0]]; ok {
+				responses[lastStatusCode] = responseInfo{Type: tv.Type}
+				lastStatusCode = 200
+			}
+		}
+
+		// User-configured patterns
+		for _, p := range patterns {
+			if funcPath == p.FunctionPath {
+				statusCode := 200
+				var dataArg ast.Expr
+				var desc string
+
+				if p.StatusCodeIndex != nil && len(call.Args) > *p.StatusCodeIndex {
+					if sc, ok := s.resolveIntValue(call.Args[*p.StatusCodeIndex]); ok {
 						statusCode = sc
 					}
 				}
-				// Get data type from second arg
-				if info := s.getInfoForNode(call.Args[1]); info != nil {
-					if tv, ok := info.Types[call.Args[1]]; ok {
-						respType = tv.Type
-						return false
+
+				if p.DescriptionIndex != nil && len(call.Args) > *p.DescriptionIndex {
+					if d, ok := s.resolveStringValue(call.Args[*p.DescriptionIndex]); ok {
+						desc = d
 					}
 				}
-			}
-			// Standard library-like: json.NewEncoder(w).Encode(data)
-			if sel.Sel.Name == "Encode" && len(call.Args) == 1 {
-				if info := s.getInfoForNode(call.Args[0]); info != nil {
-					if tv, ok := info.Types[call.Args[0]]; ok {
-						respType = tv.Type
-						return false
+
+				if len(call.Args) > p.DataIndex {
+					dataArg = call.Args[p.DataIndex]
+				}
+
+				if dataArg != nil {
+					if tv, ok := info.Types[dataArg]; ok {
+						responses[statusCode] = responseInfo{Type: tv.Type, Description: desc}
 					}
+				} else {
+					responses[statusCode] = responseInfo{Description: desc}
 				}
 			}
 		}
 		return true
 	})
-	return respType, statusCode
+	return responses
 }

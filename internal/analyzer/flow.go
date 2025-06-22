@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"slices"
 
 	"github.com/Zachacious/go-respec/internal/model"
 	"golang.org/x/tools/go/ast/astutil"
@@ -122,11 +123,17 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 	routerDef := currentValue.RouterDef
 
 	// Is it an endpoint method? (e.g., .Get, .Post)
-	for _, endpointMethod := range routerDef.EndpointMethods {
-		if methodName == endpointMethod {
-			s.buildRouteFromCall(currentValue, call)
-			return
+	if slices.Contains(routerDef.EndpointMethods, methodName) {
+		// We need to find the handler's source code to pass to the route builder.
+		var handlerFuncDecl *ast.FuncDecl
+		if len(call.Args) >= 2 {
+			handlerObj := s.getObjectForExpr(call.Args[1])
+			if handlerObj != nil {
+				handlerFuncDecl, _ = s.Universe.Functions[handlerObj]
+			}
 		}
+		s.buildRouteFromCall(currentValue, call, handlerFuncDecl)
+		return
 	}
 
 	// Is it a chaining method? (e.g., .With, .Group, .Route)
@@ -160,6 +167,19 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 		currentValue.Node.Children = append(currentValue.Node.Children, newNode)
 		newVal := &TrackedValue{
 			Source: call, RouterDef: routerDef, Parent: currentValue, PathPrefix: pathPrefix, Node: newNode,
+		}
+
+		// If middleware is being applied, analyze it.
+		// A .Use() call usually returns the same router, so we analyze the arguments.
+		if !isGroup { // Assuming .Use() is not a grouping method
+			for _, arg := range call.Args {
+				// The argument to .Use is the middleware handler
+				if middlewareObj := s.getObjectForExpr(arg); middlewareObj != nil {
+					inferredSchemes := s.analyzeMiddleware(middlewareObj)
+					// Attach the inferred schemes to the current node
+					currentValue.Node.InferredSecurity = append(currentValue.Node.InferredSecurity, inferredSchemes...)
+				}
+			}
 		}
 
 		path, found := s.findPathToNode(call)
