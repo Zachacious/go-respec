@@ -10,6 +10,7 @@ echo "🚀 Starting local debug build and install..."
 # Ensure we are in the script's directory to find the Makefile correctly
 cd "$(dirname "$0")/.."
 
+make clean
 make debug
 
 echo "🎉 Done."
