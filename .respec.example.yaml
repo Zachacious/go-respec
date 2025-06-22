@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# SECTION 1: API Metadata (Recommended)
+# ---------------------------------------------------------------------------
+# Purpose: Defines the high-level information for your OpenAPI specification.
+# When to use: Always. This gives your generated spec a professional title,
+# version, and description.
+# Optional: Yes, but highly recommended. `respec` provides a generic
+# default if this section is omitted.
+info:
+  title: "My API"
+  version: "1.0.0"
+  description: "The complete REST API for the my service."
+
+# ---------------------------------------------------------------------------
+# SECTION 2: Security Schemes (Optional)
+# ---------------------------------------------------------------------------
+# Purpose: Defines the security mechanisms your API uses (e.g., JWT, API Keys).
+# When to use: Use this section to give a name and definition to each security
+# type you use. This definition will be referenced later by securityPatterns.
+# Optional: Yes. Only needed if your API has secured endpoints.
+securitySchemes:
+  # 'BearerAuth' is a custom name you choose. You will use this name later.
+  BearerAuth:
+    type: http # The type of security. 'http' is common for tokens.
+    scheme: bearer # The scheme, e.g., 'bearer' for JWTs.
+    bearerFormat: JWT # A hint about the format.
+
+# ---------------------------------------------------------------------------
+# SECTION 3: Router Definitions (Optional, for non-standard frameworks)
+# ---------------------------------------------------------------------------
+# Purpose: Teaches `respec` the routing syntax of your web framework.
+# When to use: Only if you are using a framework other than Chi or Gin.
+# Optional: Yes. `respec` has built-in defaults for `chi/v5` and `gin-gonic/gin`.
+# You do NOT need to include this section if you use one of those frameworks.
+# It is shown here for educational purposes.
+routerDefinitions:
+  - # This is the built-in definition for the Chi router.
+    type: "github.com/go-chi/chi/v5.Mux"
+    endpointMethods:
+      ["Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"]
+    groupMethods: ["Route", "Group"]
+    middlewareWrapperMethods: ["With", "Use"]
+
+# ---------------------------------------------------------------------------
+# SECTION 4: Handler Inference Patterns (Optional, for custom helpers)
+# ---------------------------------------------------------------------------
+# Purpose: This is the most powerful section. It teaches `respec` to infer
+# details by recognizing your project's custom helper functions.
+# When to use: When your handlers don't use the standard library directly, but
+# instead use custom utility functions to write responses or bind requests.
+# Optional: Yes. `respec` has built-in magic for standard library functions.
+# You only need to add patterns for your project's specific helpers.
+handlerPatterns:
+  # Defines functions that parse the request body.
+  requestBody:
+    # This teaches respec that `utils.ValidateRequest(&req, ...)` means the
+    # first argument (`argIndex: 0`) is the request body struct.
+    - functionPath: "github.com/me/myservice/internal/utils.ValidateRequest"
+      argIndex: 0
+
+  # Defines functions that write HTTP responses.
+  responseBody:
+    # This pattern matches your `utils.RespondWithJSON` helper.
+    - functionPath: "github.com/me/myservice/internal/utils.RespondWithJSON"
+      statusCodeIndex: 1 # The 2nd argument (index 1) is the status code.
+      dataIndex: 2 # The 3rd argument (index 2) is the response data.
+
+    # This pattern matches your `utils.RespondWithError` helper.
+    - functionPath: "github.com/me/myservice/internal/utils.RespondWithError"
+      statusCodeIndex: 1 # The 2nd argument is the status code.
+      descriptionIndex: 2 # The 3rd argument is the error message string.
+      dataIndex: 3 # The 4th argument is the error data object.
+
+  # Defines functions for reading query parameters.
+  # Optional: The standard library default is built-in, shown here for example.
+  queryParameter:
+    - functionPath: "net/http.URL.Query.Get"
+      nameIndex: 0
+
+  # Defines functions for reading header parameters.
+  # Optional: The standard library default is built-in, shown here for example.
+  headerParameter:
+    - functionPath: "net/http.Header.Get"
+      nameIndex: 0
+
+# ---------------------------------------------------------------------------
+# SECTION 5: Security Inference Patterns (Optional)
+# ---------------------------------------------------------------------------
+# Purpose: Connects a function call found in your middleware to a security
+# scheme you defined in `securitySchemes`.
+# When to use: When you want `respec` to automatically document which endpoints
+# are protected.
+# Optional: Yes. Use this to enable security inference.
+securityPatterns:
+  # This rule tells respec: "When you see a call to the 'Validate' method
+  # on a 'token.Service' anywhere inside a middleware, apply the 'BearerAuth'
+  # security scheme to all routes protected by that middleware."
+  - functionPath: "github.com/me/myservice/internal/services/token.Service.Validate"
+    schemeName: "BearerAuth"
