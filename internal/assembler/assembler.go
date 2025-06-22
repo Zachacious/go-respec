@@ -10,10 +10,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// BuildSpec constructs the final openapi3.T document from the analyzed API model.
 func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error) {
 	spec := &openapi3.T{
-		// FIX: Update to a valid OpenAPI 3.1.0 version string.
 		OpenAPI: "3.1.0",
 		Info:    cfg.Info,
 		Components: &openapi3.Components{
@@ -82,7 +80,8 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 			}
 		}
 
-		// Look up metadata using the new respec.H() API.
+		// Layer 1 - Explicit Overrides from Metadata API
+		// Look up metadata using the new respec.Handler() API.
 		if builder := respec.GetByHandler(op.GoHandler); builder != nil {
 			if s := builder.GetSummary(); s != "" {
 				operationSpec.Summary = s
@@ -93,6 +92,7 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 			if t := builder.GetTags(); len(t) > 0 {
 				operationSpec.Tags = t
 			}
+			// This will OVERWRITE any security that was inferred from middleware.
 			if schemes := builder.GetSecurity(); len(schemes) > 0 {
 				req := openapi3.SecurityRequirement{}
 				for _, schemeName := range schemes {
@@ -100,7 +100,6 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 				}
 				operationSpec.Security = &openapi3.SecurityRequirements{req}
 			}
-			// (Future: Add param overrides here)
 		}
 
 		// Find or create the PathItem for this route.
