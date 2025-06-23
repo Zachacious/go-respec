@@ -19,7 +19,34 @@ debug() {
     fi
 }
 
-# === SCRIPT LOGIC ===
+# Function to show help message
+show_help() {
+    cat <<EOF
+📦 Usage: $(basename "$0") [version] [--patch|--minor|--major] [-m "message"]
+
+Options:
+  vX.Y.Z          Explicitly set the release version (e.g., v1.2.3).
+  --patch         Bump patch version (default if no version specified).
+  --minor         Bump minor version.
+  --major         Bump major version.
+  -m, --message   Provide release notes inline.
+  -h, --help      Show this help message and exit.
+
+Examples:
+  ./release.sh v1.3.0 -m "Add feature X and fix bug Y"
+      → Tag v1.3.0 explicitly, with release notes.
+
+  ./release.sh --minor -m "Add feature X"
+      → Auto-detect latest tag and bump MINOR version.
+
+  ./release.sh
+      → Auto-bump patch version and prompt for release notes.
+
+Notes:
+- If the version already exists, you'll be prompted to overwrite it.
+- You must have a clean git working directory before releasing.
+EOF
+}
 
 # --- Initial Health Checks ---
 if ! command -v gh >/dev/null 2>&1; then
@@ -42,22 +69,13 @@ fi
 # --- Git Synchronization ---
 echo "🔄 Switching to '$MAIN_BRANCH' and pulling latest changes..."
 git checkout "$MAIN_BRANCH"
-if ! GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"; then
-    echo "❌ Git Error: Failed to pull from origin. Please ensure your git credentials are configured correctly."
-    exit 1
-fi
+GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"
 
 echo "🔄 Pushing '$MAIN_BRANCH' to origin to ensure it is up-to-date..."
-if ! GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"; then
-    echo "❌ Git Error: Failed to push to origin. Please check your permissions and credentials."
-    exit 1
-fi
+GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"
 
 echo "🔄 Fetching and pruning all tags from the 'origin' remote..."
-if ! GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags; then
-    echo "❌ Git Error: Failed to fetch and prune tags. Please ensure your git credentials are configured correctly."
-    exit 1
-fi
+GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags
 
 # --- Go Module Verification ---
 echo "🔍 Verifying Go module setup..."
@@ -75,10 +93,7 @@ debug "Go module name: $MOD_NAME"
 
 # --- Run Tests ---
 echo "🧪 Running tests..."
-if ! go test ./...; then
-    echo "❌ Tests failed. Fix the failing tests before creating a release."
-    exit 1
-fi
+go test ./...
 
 # --- Argument Parsing ---
 BUMP="patch"
@@ -86,26 +101,34 @@ VERSION=""
 NOTES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    v*.*.*) 
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    v*.*.*)
       if ! [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "❌ Invalid version format: '$1'. Must be in format vX.Y.Z with numeric components."
+        echo "❌ Invalid version format: '$1'. Must be in format vX.Y.Z"
         exit 1
       fi
-      VERSION="$1"; 
-      shift 
+      VERSION="$1"
+      shift
       ;;
     --major) BUMP="major"; shift ;;
     --minor) BUMP="minor"; shift ;;
     --patch) BUMP="patch"; shift ;;
-    -m|--message) 
-      NOTES="$2"; 
+    -m|--message)
+      NOTES="$2"
       if [[ -z "$NOTES" ]]; then
         echo "❌ Release notes cannot be empty when using -m/--message."
         exit 1
       fi
-      shift 2 
+      shift 2
       ;;
-    *) echo "❌ Unknown argument: $1"; exit 1 ;;
+    *)
+      echo "❌ Unknown argument: $1"
+      echo "   Use --help for usage."
+      exit 1
+      ;;
   esac
 done
 
@@ -138,28 +161,22 @@ else
             MINOR="${BASH_REMATCH[2]}"
             PATCH="${BASH_REMATCH[3]}"
 
-            debug "Parsed version components - MAJOR: $MAJOR, MINOR: $MINOR, PATCH: $PATCH"
-
             case "$BUMP" in
                 major)
-                    debug "Applying MAJOR bump"
-                    MAJOR=$(expr "$MAJOR" + 1)
+                    MAJOR=$((MAJOR + 1))
                     MINOR=0
                     PATCH=0
                     ;;
                 minor)
-                    debug "Applying MINOR bump"
-                    MINOR=$(expr "$MINOR" + 1)
+                    MINOR=$((MINOR + 1))
                     PATCH=0
                     ;;
                 patch)
-                    debug "Applying PATCH bump"
-                    PATCH=$(expr "$PATCH" + 1)
+                    PATCH=$((PATCH + 1))
                     ;;
             esac
 
             VERSION="v$MAJOR.$MINOR.$PATCH"
-            debug "Calculated new version: $VERSION"
         else
             echo "❌ Invalid latest tag format: '$LATEST_TAG'. Expected format: vX.Y.Z"
             exit 1
@@ -167,8 +184,8 @@ else
     else
         echo "🔍 No existing tags found. Creating initial release."
         VERSION="$INITIAL_VERSION"
-        debug "Using initial version: $VERSION"
     fi
+    debug "Calculated version: $VERSION"
 fi
 
 # --- Confirmation Step ---
