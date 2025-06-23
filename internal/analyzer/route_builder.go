@@ -38,8 +38,7 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 
 	if c, ok := handlerArg.(*ast.CallExpr); ok {
 		if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unwrap" {
-			// CORRECTED: Call the method on `s`
-			_, realHandlerExpr := s.parseRouteChain(sel.X)
+			_, realHandlerExpr := s.parseHandlerChain(sel.X)
 			if realHandlerExpr != nil {
 				handlerObj = s.getObjectForExpr(realHandlerExpr)
 			}
@@ -65,9 +64,8 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 		op.HandlerPackage = handlerObj.Pkg().Path()
 	}
 
-	// CORRECTED: Look up metadata and ATTACH to the model. Do not apply it yet.
 	if metadata, ok := s.OperationMetadata[handlerObj]; ok {
-		op.BuilderMetadata = metadata
+		op.HandlerMetadata = metadata
 	}
 
 	routeNode := val.Node

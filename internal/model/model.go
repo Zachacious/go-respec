@@ -54,7 +54,7 @@ type Operation struct {
 	GoHandler types.Object
 
 	// BuilderMetadata holds metadata from the fluent builder.
-	BuilderMetadata *respec.BuilderMetadata // <-- CORRECTED
+	HandlerMetadata *respec.HandlerMetadata // <-- CORRECTED
 
 	// Spec is the OpenAPI specification of the API endpoint.
 	Spec *openapi3.Operation

@@ -96,7 +96,7 @@ type State struct {
 
 	// OperationMetadata stores metadata parsed from `respec.Route` builders,
 	// keyed by the handler's unique types.Object.
-	OperationMetadata map[types.Object]*respec.BuilderMetadata
+	OperationMetadata map[types.Object]*respec.HandlerMetadata
 }
 
 // NewState creates a new State instance.
@@ -126,7 +126,7 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 		SchemaGen:         NewSchemaGenerator(),
 		Config:            cfg,
 		GroupMetadata:     make(model.GroupMetadataMap),
-		OperationMetadata: make(map[types.Object]*respec.BuilderMetadata),
+		OperationMetadata: make(map[types.Object]*respec.HandlerMetadata),
 	}
 
 	// Immediately run the resolver to populate our type map.

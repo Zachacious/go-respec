@@ -10,7 +10,6 @@ import (
 )
 
 func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error) {
-	// ... (initial spec setup is unchanged) ...
 	spec := &openapi3.T{
 		OpenAPI: "3.1.0",
 		Info:    cfg.Info,
@@ -31,7 +30,6 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 }
 
 func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata model.GroupMetadataMap) {
-	// ... (group metadata application is unchanged) ...
 	if meta, ok := groupMetadata[node.GoVar]; ok {
 		if tags := meta.GetTags(); len(tags) > 0 {
 			node.Tags = append(node.Tags, tags...)
@@ -44,7 +42,6 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata mode
 	for _, op := range node.Operations {
 		operationSpec := op.Spec
 
-		// ... (hierarchical metadata application is unchanged) ...
 		var allTags []string
 		var allSecurity []string
 		for n := node; n != nil; n = n.Parent {
@@ -64,8 +61,7 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata mode
 			operationSpec.Security = &openapi3.SecurityRequirements{req}
 		}
 
-		// --- CORRECTED: Apply Handler-Specific Overrides from the Model ---
-		if builder := op.BuilderMetadata; builder != nil {
+		if builder := op.HandlerMetadata; builder != nil {
 			if s := builder.Summary; s != "" {
 				operationSpec.Summary = s
 			}
@@ -73,14 +69,13 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata mode
 				operationSpec.Description = d
 			}
 			if t := builder.Tags; len(t) > 0 {
-				operationSpec.Tags = t // Handler tags overwrite all group tags
+				operationSpec.Tags = t
 			}
 			if schemes := builder.Security; len(schemes) > 0 {
 				req := openapi3.SecurityRequirement{}
 				for _, schemeName := range schemes {
 					req[schemeName] = []string{}
 				}
-				// This security requirement replaces any inferred ones.
 				operationSpec.Security = &openapi3.SecurityRequirements{req}
 			}
 		}
