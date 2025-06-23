@@ -27,7 +27,6 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
-# Verify GitHub CLI is authenticated
 if ! gh auth status >/dev/null 2>&1; then
     echo "❌ GitHub CLI is not authenticated. Please run 'gh auth login' first."
     exit 1
@@ -47,11 +46,13 @@ if ! GIT_TERMINAL_PROMPT=0 git pull origin "$MAIN_BRANCH"; then
     echo "❌ Git Error: Failed to pull from origin. Please ensure your git credentials are configured correctly."
     exit 1
 fi
+
 echo "🔄 Pushing '$MAIN_BRANCH' to origin to ensure it is up-to-date..."
 if ! GIT_TERMINAL_PROMPT=0 git push origin "$MAIN_BRANCH"; then
     echo "❌ Git Error: Failed to push to origin. Please check your permissions and credentials."
     exit 1
 fi
+
 echo "🔄 Fetching and pruning all tags from the 'origin' remote..."
 if ! GIT_TERMINAL_PROMPT=0 git fetch origin --prune --prune-tags; then
     echo "❌ Git Error: Failed to fetch and prune tags. Please ensure your git credentials are configured correctly."
@@ -86,7 +87,6 @@ NOTES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     v*.*.*) 
-      # Validate version format strictly
       if ! [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "❌ Invalid version format: '$1'. Must be in format vX.Y.Z with numeric components."
         exit 1
@@ -110,7 +110,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Detect and Calculate Version ---
-if [[ -z "$VERSION" ]]; then
+if [[ -n "$VERSION" ]]; then
+    debug "Explicit version provided: $VERSION"
+    if git rev-parse "$VERSION" >/dev/null 2>&1; then
+        echo "⚠️ Tag $VERSION already exists."
+        read -p "   Do you want to overwrite it? This will delete and recreate the tag. (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "🛑 Release cancelled."
+            exit 1
+        fi
+        git tag -d "$VERSION" || true
+        git push --delete origin "$VERSION" || true
+    fi
+else
     debug "No version specified, will calculate based on latest tag"
     LATEST_TAG_RAW=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
     debug "Raw tag from git: '$LATEST_TAG_RAW'"
@@ -119,16 +132,14 @@ if [[ -z "$VERSION" ]]; then
         LATEST_TAG=$(echo "$LATEST_TAG_RAW" | tr -d '[:space:]')
         echo "🔍 Latest tag found: $LATEST_TAG"
         debug "Processing tag: '$LATEST_TAG'"
-        
-        # More robust version parsing using bash regex
+
         if [[ "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
             MINOR="${BASH_REMATCH[2]}"
             PATCH="${BASH_REMATCH[3]}"
-            
+
             debug "Parsed version components - MAJOR: $MAJOR, MINOR: $MINOR, PATCH: $PATCH"
-            
-            # Use expr for more reliable arithmetic
+
             case "$BUMP" in
                 major)
                     debug "Applying MAJOR bump"
@@ -146,7 +157,7 @@ if [[ -z "$VERSION" ]]; then
                     PATCH=$(expr "$PATCH" + 1)
                     ;;
             esac
-            
+
             VERSION="v$MAJOR.$MINOR.$PATCH"
             debug "Calculated new version: $VERSION"
         else
@@ -179,12 +190,6 @@ if [[ -z "$NOTES" ]]; then
     exit 1
 fi
 
-# --- Check for tag collision ---
-if git rev-parse "$VERSION" >/dev/null 2>&1; then
-    echo "❌ Tag $VERSION already exists. Please choose a different version."
-    exit 1
-fi
-
 # --- Execution Step ---
 echo "1. Tagging version $VERSION..."
 git tag -a "$VERSION" -m "Release $VERSION"
@@ -204,7 +209,6 @@ if ! make release; then
     exit 1
 fi
 
-# Verify artifacts exist
 if [[ ! -d "dist" ]]; then
     echo "❌ Error: 'dist' directory not found after build."
     echo "   To recover, you may want to delete the tag:"
@@ -212,7 +216,6 @@ if [[ ! -d "dist" ]]; then
     exit 1
 fi
 
-# Count files in dist directory
 DIST_FILES=$(find dist -type f | wc -l)
 if [[ "$DIST_FILES" -eq 0 ]]; then
     echo "❌ Error: No artifacts found in 'dist' directory after build."
@@ -235,8 +238,7 @@ fi
 echo "5. Notifying Go proxy..."
 echo "   Waiting for Go proxy to acknowledge the new version..."
 
-# More reliable proxy notification with timeout and error checking
-PROXY_TIMEOUT=60  # seconds
+PROXY_TIMEOUT=60
 PROXY_START_TIME=$(date +%s)
 PROXY_NOTIFIED=false
 
