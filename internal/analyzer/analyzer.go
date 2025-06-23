@@ -19,51 +19,47 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 			packages.NeedSyntax | packages.NeedTypesInfo,
 		Dir: projectPath,
 	}
-
-	// Load packages from the project directory.
 	pkgs, err := packages.Load(pkgCfg, "./...")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load packages: %w", err)
 	}
-
-	// Check for package errors.
 	if packages.PrintErrors(pkgs) > 0 {
 		return nil, fmt.Errorf("packages contain errors")
 	}
 
-	// Create a new analysis state.
 	state, err := NewState(pkgs, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Perform analysis phases.
+	// --- Perform analysis phases ---
+	fmt.Println("Phase 1: Discovering universe...")
 	state.discoverUniverse()
-	state.performDataFlowAnalysis()
-	state.FindGroupMetadata()
-	state.analyzeHandlers()
-	// state.FindAndApplyGroupMetadata()
 
-	// Log analysis completion.
+	fmt.Println("Phase 2: Parsing handler metadata...")
+	state.FindAndParseRouteMetadata() // <-- ADDED THIS MISSING STEP
+
+	fmt.Println("Phase 3: Performing data flow analysis...")
+	state.performDataFlowAnalysis()
+
+	fmt.Println("Phase 4: Finding group metadata...")
+	state.FindGroupMetadata()
+
+	fmt.Println("Phase 5: Analyzing handler bodies...")
+	state.analyzeHandlers()
+
 	fmt.Println("✅ Analysis complete. All phases executed successfully.")
 
-	// Create an API model.
+	// ... (API model assembly is unchanged) ...
 	apiModel := &model.APIModel{}
 	apiModel.RouteGraph = state.RouteGraph
 	apiModel.GroupMetadata = state.GroupMetadata
-
-	// Initialize components if not set.
 	if apiModel.Components == nil {
 		apiModel.Components = &openapi3.Components{}
 	}
-
-	// Initialize schemas if not set.
-	// Use the explicit map type to avoid any ambiguity with the type alias.
 	if apiModel.Components.Schemas == nil {
 		apiModel.Components.Schemas = make(map[string]*openapi3.SchemaRef)
 	}
-
-	// Populate schemas from the state.
 	for _, ref := range state.SchemaGen.schemas {
 		key := strings.TrimPrefix(ref.Ref, "#/components/schemas/")
 		apiModel.Components.Schemas[key] = ref
