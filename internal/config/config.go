@@ -94,7 +94,7 @@ func Load(projectPath string) (*Config, error) {
 				Type:                     "github.com/go-chi/chi/v5.Mux",
 				EndpointMethods:          []string{"Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"},
 				GroupMethods:             []string{"Route", "Group"},
-				MiddlewareWrapperMethods: []string{"With"},
+				MiddlewareWrapperMethods: []string{"With", "Use"},
 			},
 			{
 				Type:                     "github.com/gin-gonic/gin.Engine",

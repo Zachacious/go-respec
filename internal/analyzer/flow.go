@@ -113,7 +113,7 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 	methodName := selExpr.Sel.Name
 	routerDef := currentValue.RouterDef
 
-	// Case 1: Is it an endpoint method? (e.g., .Get, .Post)
+	// Case 1: Endpoint method
 	if slices.Contains(routerDef.EndpointMethods, methodName) {
 		var handlerFuncDecl *ast.FuncDecl
 		if len(call.Args) >= 2 {
@@ -123,13 +123,13 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 			}
 		}
 		s.buildRouteFromCall(currentValue, call, handlerFuncDecl)
-		return
+		return // End of this chain
 	}
 
 	isGroupMethod := slices.Contains(routerDef.GroupMethods, methodName)
 	isMiddlewareMethod := slices.Contains(routerDef.MiddlewareWrapperMethods, methodName)
 
-	// Case 2: Is it a chaining method? (e.g., .With, .Group, .Route)
+	// Case 2: Chaining method
 	if isGroupMethod || isMiddlewareMethod {
 		pathPrefix := ""
 		if isGroupMethod && len(call.Args) > 0 {
@@ -147,29 +147,43 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 			PathPrefix: pathPrefix,
 			Node:       newNode,
 		}
+		// Associate the result of this call expression with the new tracked value.
+		s.ExprResults[call] = newVal
 
-		// ** THIS BLOCK IS RESTORED **
-		// If this is a middleware method, analyze its arguments for security schemes.
 		if isMiddlewareMethod {
 			for _, arg := range call.Args {
 				if middlewareObj := s.getObjectForExpr(arg); middlewareObj != nil {
 					inferredSchemes := s.analyzeMiddleware(middlewareObj)
-					// Security from middleware applies to the node it's called on.
 					currentValue.Node.InferredSecurity = append(currentValue.Node.InferredSecurity, inferredSchemes...)
 				}
 			}
 		}
 
-		// Look for a function literal argument to trace into the new scope.
+		// Look for a function literal argument to trace into a new scope.
 		for _, arg := range call.Args {
 			if funcLit, ok := arg.(*ast.FuncLit); ok {
-				if funcLit.Body == nil || len(funcLit.Type.Params.List) == 0 || len(funcLit.Type.Params.List[0].Names) == 0 {
-					continue
+				if funcLit.Body != nil && len(funcLit.Type.Params.List) > 0 && len(funcLit.Type.Params.List[0].Names) > 0 {
+					paramIdent := funcLit.Type.Params.List[0].Names[0]
+					if info := s.getInfoForNode(paramIdent); info != nil {
+						if paramObj, ok := info.Defs[paramIdent].(*types.Var); ok {
+							s.findAndProcessUsagesInScope(file, funcLit.Body, paramObj, newVal)
+						}
+					}
 				}
-				paramIdent := funcLit.Type.Params.List[0].Names[0]
-				if info := s.getInfoForNode(paramIdent); info != nil {
-					if paramObj, ok := info.Defs[paramIdent].(*types.Var); ok {
-						s.findAndProcessUsagesInScope(file, funcLit.Body, paramObj, newVal)
+			}
+		}
+
+		// ** THIS BLOCK IS NEW **
+		// After processing this call, check if its result is used in another call
+		// to handle chains like r.With(...).Post(...).
+		path, _ := astutil.PathEnclosingInterval(file, call.Pos(), call.End())
+		if len(path) > 1 {
+			// The parent of a CallExpr in a chain is the SelectorExpr of the next call.
+			if nextSel, ok := path[1].(*ast.SelectorExpr); ok {
+				if len(path) > 2 {
+					// The grandparent is the full next call expression.
+					if nextCall, ok := path[2].(*ast.CallExpr); ok && nextCall.Fun == nextSel {
+						s.processMethodCall(newVal, nextCall, file)
 					}
 				}
 			}
