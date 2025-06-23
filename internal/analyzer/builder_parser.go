@@ -2,21 +2,18 @@ package analyzer
 
 import (
 	"go/ast"
+	"go/types"
 	"strconv"
 
-	"github.com/Zachacious/go-respec/internal/model"
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/Zachacious/go-respec/respec"
 )
 
-// GroupMetadata holds the parsed metadata from a respec.Group call.
-type GroupMetadata struct {
-	Tags     []string
-	Security []string
-}
+const respecRouteFuncPath = "github.com/Zachacious/go-respec/respec.Route"
 
-// FindAndApplyGroupMetadata finds all `respec.Group` calls and applies their
-// metadata to all operations defined within their scope.
-func (s *State) FindAndApplyGroupMetadata() {
+// FindAndParseRouteMetadata scans the AST for `respec.Route(...).Unwrap()` call chains.
+func (s *State) FindAndParseRouteMetadata() {
+	s.OperationMetadata = make(map[types.Object]*respec.BuilderMetadata)
+
 	for _, pkg := range s.pkgs {
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
@@ -25,47 +22,56 @@ func (s *State) FindAndApplyGroupMetadata() {
 					return true
 				}
 
-				obj := s.getObjectForExpr(call.Fun)
-				// FIX: Look for the new function name `respec.Group`.
-				if obj == nil || getFuncPath(obj) != "github.com/Zachacious/go-respec/respec.Group" {
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Unwrap" {
 					return true
 				}
 
-				metadata := parseGroupChain(call)
-
-				if len(call.Args) == 1 {
-					if funcLit, ok := call.Args[0].(*ast.FuncLit); ok && funcLit.Body != nil {
-						s.applyMetadataToBlock(funcLit.Body, metadata)
-					}
+				metadata, handlerExpr := s.parseRouteChain(sel.X) // <-- CORRECTED to be a method call
+				if handlerExpr == nil {
+					return true
 				}
-				return true
+
+				if handlerObj := s.getObjectForExpr(handlerExpr); handlerObj != nil {
+					s.OperationMetadata[handlerObj] = metadata
+				}
+
+				return false
 			})
 		}
 	}
 }
 
-// parseGroupChain walks backwards from the end of a chain like `...Group(...).Tag(...)`
-func parseGroupChain(startCall *ast.CallExpr) GroupMetadata {
-	metadata := GroupMetadata{}
-	currentCall := startCall
+// parseRouteChain is now a method on *State to be shared.
+func (s *State) parseRouteChain(expr ast.Expr) (*respec.BuilderMetadata, ast.Expr) {
+	metadata := &respec.BuilderMetadata{
+		Tags:     []string{},
+		Security: []string{},
+	}
+	currentExpr := expr
 
 	for {
-		selExpr, ok := currentCall.Fun.(*ast.SelectorExpr)
+		call, ok := currentExpr.(*ast.CallExpr)
+		if !ok {
+			break
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok {
 			break
 		}
 
-		methodName := selExpr.Sel.Name
-		var argValues []string
-		for _, arg := range currentCall.Args {
-			if lit, ok := arg.(*ast.BasicLit); ok {
-				if val, err := strconv.Unquote(lit.Value); err == nil {
-					argValues = append(argValues, val)
-				}
-			}
-		}
+		methodName := sel.Sel.Name
+		argValues := extractStringArgs(call)
 
 		switch methodName {
+		case "Summary":
+			if len(argValues) > 0 {
+				metadata.Summary = argValues[0]
+			}
+		case "Description":
+			if len(argValues) > 0 {
+				metadata.Description = argValues[0]
+			}
 		case "Tag":
 			metadata.Tags = append(metadata.Tags, argValues...)
 		case "Security":
@@ -73,38 +79,41 @@ func parseGroupChain(startCall *ast.CallExpr) GroupMetadata {
 				metadata.Security = append(metadata.Security, argValues[0])
 			}
 		}
-
-		prevCall, ok := selExpr.X.(*ast.CallExpr)
-		if !ok {
-			break
-		}
-		currentCall = prevCall
+		currentExpr = sel.X
 	}
-	return metadata
+
+	routeCall, ok := currentExpr.(*ast.CallExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	// Verify the call is to `respec.Route`.
+	obj := s.getObjectForExpr(routeCall.Fun)
+	if obj == nil {
+		return nil, nil
+	}
+
+	// CORRECTED: Type-assert to *types.Func to access FullName().
+	if fn, ok := obj.(*types.Func); !ok || fn.FullName() != respecRouteFuncPath {
+		return nil, nil
+	}
+
+	if len(routeCall.Args) == 1 {
+		return metadata, routeCall.Args[0]
+	}
+
+	return nil, nil
 }
 
-// applyMetadataToBlock finds all operations within a given AST block and adds the metadata.
-func (s *State) applyMetadataToBlock(block *ast.BlockStmt, metadata GroupMetadata) {
-	s.traverseAndApply(s.RouteGraph, block, metadata)
-}
-
-func (s *State) traverseAndApply(node *model.RouteNode, block *ast.BlockStmt, metadata GroupMetadata) {
-	for _, op := range node.Operations {
-		if op.GoHandler != nil && block.Pos() <= op.GoHandler.Pos() && op.GoHandler.Pos() < block.End() {
-			if op.Spec != nil {
-				op.Spec.Tags = append(metadata.Tags, op.Spec.Tags...)
-
-				if op.Spec.Security == nil && len(metadata.Security) > 0 {
-					req := openapi3.SecurityRequirement{}
-					for _, schemeName := range metadata.Security {
-						req[schemeName] = []string{}
-					}
-					op.Spec.Security = &openapi3.SecurityRequirements{req}
-				}
+// extractStringArgs remains the same.
+func extractStringArgs(call *ast.CallExpr) []string {
+	var values []string
+	for _, arg := range call.Args {
+		if lit, ok := arg.(*ast.BasicLit); ok {
+			if val, err := strconv.Unquote(lit.Value); err == nil {
+				values = append(values, val)
 			}
 		}
 	}
-	for _, child := range node.Children {
-		s.traverseAndApply(child, block, metadata)
-	}
+	return values
 }

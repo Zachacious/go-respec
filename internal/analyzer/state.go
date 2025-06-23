@@ -7,6 +7,7 @@ import (
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
+	"github.com/Zachacious/go-respec/respec"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -92,6 +93,10 @@ type State struct {
 	Config *config.Config
 
 	GroupMetadata model.GroupMetadataMap
+
+	// OperationMetadata stores metadata parsed from `respec.Route` builders,
+	// keyed by the handler's unique types.Object.
+	OperationMetadata map[types.Object]*respec.BuilderMetadata
 }
 
 // NewState creates a new State instance.
@@ -113,14 +118,15 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 			Constants: make(map[types.Object]*ast.ValueSpec),
 		},
 		// Initialize flow analysis fields
-		Worklist:      make([]WorklistItem, 0),
-		ExprResults:   make(map[ast.Expr]*TrackedValue),
-		VarValues:     make(map[types.Object]*TrackedValue),
-		processed:     make(map[ast.Node]bool),
-		RouteGraph:    &model.RouteNode{PathPrefix: "/"},
-		SchemaGen:     NewSchemaGenerator(),
-		Config:        cfg,
-		GroupMetadata: make(model.GroupMetadataMap),
+		Worklist:          make([]WorklistItem, 0),
+		ExprResults:       make(map[ast.Expr]*TrackedValue),
+		VarValues:         make(map[types.Object]*TrackedValue),
+		processed:         make(map[ast.Node]bool),
+		RouteGraph:        &model.RouteNode{PathPrefix: "/"},
+		SchemaGen:         NewSchemaGenerator(),
+		Config:            cfg,
+		GroupMetadata:     make(model.GroupMetadataMap),
+		OperationMetadata: make(map[types.Object]*respec.BuilderMetadata),
 	}
 
 	// Immediately run the resolver to populate our type map.

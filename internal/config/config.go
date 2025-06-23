@@ -151,3 +151,32 @@ func Load(projectPath string) (*Config, error) {
 
 	return cfg, nil
 }
+
+// A helper to get sanitized security schemes, which you might want to move to the config package.
+func (c *Config) GetSecuritySchemes() openapi3.SecuritySchemes {
+	schemes := make(openapi3.SecuritySchemes)
+	if c.SecuritySchemes == nil {
+		return schemes
+	}
+	for key, val := range c.SecuritySchemes {
+		schemeMap, ok := val.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		scheme := &openapi3.SecurityScheme{}
+		if t, ok := schemeMap["type"].(string); ok {
+			scheme.Type = t
+		}
+		if d, ok := schemeMap["description"].(string); ok {
+			scheme.Description = d
+		}
+		if s, ok := schemeMap["scheme"].(string); ok {
+			scheme.Scheme = s
+		}
+		if bf, ok := schemeMap["bearerFormat"].(string); ok {
+			scheme.BearerFormat = bf
+		}
+		schemes[key] = &openapi3.SecuritySchemeRef{Value: scheme}
+	}
+	return schemes
+}

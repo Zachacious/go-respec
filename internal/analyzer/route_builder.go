@@ -33,7 +33,23 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 		fullPath = fullPath[:len(fullPath)-1]
 	}
 
-	handlerObj := s.getObjectForExpr(call.Args[1])
+	handlerArg := call.Args[1]
+	var handlerObj types.Object
+
+	if c, ok := handlerArg.(*ast.CallExpr); ok {
+		if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unwrap" {
+			// CORRECTED: Call the method on `s`
+			_, realHandlerExpr := s.parseRouteChain(sel.X)
+			if realHandlerExpr != nil {
+				handlerObj = s.getObjectForExpr(realHandlerExpr)
+			}
+		} else {
+			handlerObj = s.getObjectForExpr(handlerArg)
+		}
+	} else {
+		handlerObj = s.getObjectForExpr(handlerArg)
+	}
+
 	if handlerObj == nil {
 		return
 	}
@@ -43,18 +59,19 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 		FullPath:    fullPath,
 		GoHandler:   handlerObj,
 		HandlerName: handlerObj.Name(),
+		Spec:        openapi3.NewOperation(),
 	}
 	if handlerObj.Pkg() != nil {
 		op.HandlerPackage = handlerObj.Pkg().Path()
 	}
 
-	// if metadata, ok := s.Metadata[call]; ok {
-	// 	op.BuilderMetadata = metadata
-	// }
+	// CORRECTED: Look up metadata and ATTACH to the model. Do not apply it yet.
+	if metadata, ok := s.OperationMetadata[handlerObj]; ok {
+		op.BuilderMetadata = metadata
+	}
 
 	routeNode := val.Node
 	routeNode.Operations = append(routeNode.Operations, op)
-	op.Spec = openapi3.NewOperation()
 
 	// Auto-detect path parameters
 	re := regexp.MustCompile(`\{(\w+)\}`)
@@ -62,9 +79,7 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 	for _, match := range matches {
 		if len(match) > 1 {
 			paramName := match[1]
-			// Create a default string parameter first.
 			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
-			// Now, try to infer a more specific type from the handler body.
 			if handlerDecl != nil && handlerDecl.Body != nil {
 				s.inferPathParameterType(handlerDecl.Body, param)
 			}
