@@ -1,4 +1,4 @@
-// Package respec provides a fluent API for adding OpenAPI metadata to http.HandlerFuncs.
+// Package respec provides a fluent API for adding OpenAPI metadata.
 package respec
 
 import (
@@ -8,49 +8,37 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
-
-	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // --- Public API ---
 
-// Handler wraps an http.HandlerFunc to allow for metadata decoration.
-// This is the main entry point for developers adding endpoint-specific metadata.
-// Usage: r.Post("/users", respec.Handler(myHandler).Tag("Users"))
+// Handler wraps an http.HandlerFunc to allow for endpoint-specific metadata.
 func Handler(handler http.HandlerFunc) *Builder {
 	builder := newBuilder()
 	key := runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()
-	metadataStore.set(key, builder)
-
+	metadataStore.handlerData.set(key, builder)
 	builder.handler = handler
 	return builder
 }
 
-// Group is a marker function used to apply metadata to a block of routes.
-// At runtime, it simply executes the provided function to register the routes.
-// Its primary purpose is to serve as a detectable anchor for the static analyzer.
-func Group(groupFunc func()) *GroupBuilder {
-	builder := newGroupBuilder()
-	// Execute the user's function to ensure routes are registered.
-	groupFunc()
-	return builder
+// Meta provides a way to attach metadata to a router instance within a specific scope.
+func Meta(router interface{}) *GroupBuilder {
+	// This function is primarily a marker for the static analyzer.
+	return NewGroupBuilder()
 }
 
-// --- Builder for Handlers ---
+// --- Builder for Handlers (`respec.Handler`) ---
 
 type Builder struct {
-	summary        string
-	description    string
-	tags           []string
-	security       []string
-	paramModifiers map[string]ParamModifier
-	handler        http.HandlerFunc
+	summary     string
+	description string
+	tags        []string
+	security    []string
+	handler     http.HandlerFunc
 }
 
 func newBuilder() *Builder {
-	return &Builder{
-		paramModifiers: make(map[string]ParamModifier),
-	}
+	return &Builder{}
 }
 
 func (b *Builder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,80 +47,75 @@ func (b *Builder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (b *Builder) GetSummary() string                          { return b.summary }
-func (b *Builder) GetDescription() string                      { return b.description }
-func (b *Builder) GetTags() []string                           { return b.tags }
-func (b *Builder) GetSecurity() []string                       { return b.security }
-func (b *Builder) GetParamModifiers() map[string]ParamModifier { return b.paramModifiers }
+func (b *Builder) GetSummary() string     { return b.summary }
+func (b *Builder) GetDescription() string { return b.description }
+func (b *Builder) GetTags() []string      { return b.tags }
+func (b *Builder) GetSecurity() []string  { return b.security }
 
 func (b *Builder) Summary(s string) *Builder {
 	b.summary = s
 	return b
 }
-
 func (b *Builder) Description(d string) *Builder {
 	b.description = d
 	return b
 }
-
 func (b *Builder) Tag(tags ...string) *Builder {
 	b.tags = append(b.tags, tags...)
 	return b
 }
-
 func (b *Builder) Security(schemeName string) *Builder {
 	b.security = append(b.security, schemeName)
 	return b
 }
 
-func (b *Builder) OverrideParam(name string, modifier ParamModifier) *Builder {
-	b.paramModifiers[name] = modifier
-	return b
-}
-
-// --- Builder for Groups ---
+// --- Builder for Groups (`respec.Meta`) ---
 
 type GroupBuilder struct {
 	tags     []string
 	security []string
 }
 
-func newGroupBuilder() *GroupBuilder {
+// NewGroupBuilder is exported for use by the analyzer.
+func NewGroupBuilder() *GroupBuilder {
 	return &GroupBuilder{}
 }
-
+func (b *GroupBuilder) GetTags() []string     { return b.tags }
+func (b *GroupBuilder) GetSecurity() []string { return b.security }
 func (b *GroupBuilder) Tag(tags ...string) *GroupBuilder {
 	b.tags = append(b.tags, tags...)
 	return b
 }
-
 func (b *GroupBuilder) Security(schemeName string) *GroupBuilder {
 	b.security = append(b.security, schemeName)
 	return b
 }
 
-// --- Internal Logic ---
+// --- Internal Metadata Store ---
 
-type ParamModifier func(p *openapi3.Parameter)
-type ResponseModifier func(r *openapi3.Response)
+var metadataStore = struct {
+	handlerData *handlerStore
+}{
+	handlerData: newHandlerStore(),
+}
 
-var metadataStore = newStore()
-
-type store struct {
+type handlerStore struct {
 	sync.RWMutex
 	data map[string]*Builder
 }
 
-func newStore() *store {
-	return &store{
-		data: make(map[string]*Builder),
-	}
+func newHandlerStore() *handlerStore {
+	return &handlerStore{data: make(map[string]*Builder)}
 }
-
-func (s *store) set(key string, b *Builder) {
+func (s *handlerStore) set(key string, b *Builder) {
 	s.Lock()
 	defer s.Unlock()
 	s.data[key] = b
+}
+func (s *handlerStore) get(key string) *Builder {
+	s.RLock()
+	defer s.RUnlock()
+	return s.data[key]
 }
 
 func GetByHandler(handler types.Object) *Builder {
@@ -140,9 +123,7 @@ func GetByHandler(handler types.Object) *Builder {
 	if key == "" {
 		return nil
 	}
-	metadataStore.RLock()
-	defer metadataStore.RUnlock()
-	return metadataStore.data[key]
+	return metadataStore.handlerData.get(key)
 }
 
 func getFuncKeyFromTypes(obj types.Object) string {

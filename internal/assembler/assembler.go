@@ -49,39 +49,51 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 	spec.Components.SecuritySchemes = sanitizedSchemes
 
 	fmt.Println("Assembling specification from route graph...")
-	addRoutesToSpec(spec, apiModel.RouteGraph)
+	addRoutesToSpec(spec, apiModel.RouteGraph, apiModel.GroupMetadata)
 
 	fmt.Println("✅ Specification assembled successfully.")
 	return spec, nil
 }
 
-// addRoutesToSpec is a recursive helper that traverses the RouteNode graph
-// and adds all found operations to the specification's Paths object.
-func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
+// addRoutesToSpec uses the new model.GroupMetadataMap type.
+func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata model.GroupMetadataMap) {
+	// First, apply metadata from `respec.Meta(r)` to the current node.
+	if meta, ok := groupMetadata[node.GoVar]; ok {
+		if tags := meta.GetTags(); len(tags) > 0 {
+			node.Tags = append(node.Tags, tags...)
+		}
+		if security := meta.GetSecurity(); len(security) > 0 {
+			node.InferredSecurity = append(node.InferredSecurity, security...)
+		}
+	}
+
 	// Process operations at the current node
 	for _, op := range node.Operations {
-		// Get the operation spec that was populated by the inference engine.
 		operationSpec := op.Spec
 
-		// Layer 2/3 - Inferred Security from Middleware
-		// Collect security schemes by walking up the parent chain.
-		var securityRequirements []map[string][]string
+		// --- Apply Hierarchical Metadata ---
+		var allTags []string
+		var allSecurity []string
 		for n := node; n != nil; n = n.Parent {
-			for _, schemeName := range n.InferredSecurity {
-				securityRequirements = append(securityRequirements, map[string][]string{
-					schemeName: {},
-				})
-			}
+			allTags = append(allTags, n.Tags...)
+			allSecurity = append(allSecurity, n.InferredSecurity...)
 		}
-		if len(securityRequirements) > 0 {
-			// Apply the inferred security. This can be overridden by the builder below.
-			operationSpec.Security = &openapi3.SecurityRequirements{
-				securityRequirements[0], // Simplified for now, just takes the first one found
+		operationSpec.Tags = allTags
+
+		if len(allSecurity) > 0 {
+			req := openapi3.SecurityRequirement{}
+			// Use a map to handle duplicates gracefully
+			seenSchemes := make(map[string]bool)
+			for _, schemeName := range allSecurity {
+				if !seenSchemes[schemeName] {
+					req[schemeName] = []string{}
+					seenSchemes[schemeName] = true
+				}
 			}
+			operationSpec.Security = &openapi3.SecurityRequirements{req}
 		}
 
-		// Layer 1 - Explicit Overrides from Metadata API
-		// Look up metadata using the new respec.Handler() API.
+		// --- Apply Handler-Specific Overrides (Highest Priority) ---
 		if builder := respec.GetByHandler(op.GoHandler); builder != nil {
 			if s := builder.GetSummary(); s != "" {
 				operationSpec.Summary = s
@@ -90,9 +102,8 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 				operationSpec.Description = d
 			}
 			if t := builder.GetTags(); len(t) > 0 {
-				operationSpec.Tags = t
+				operationSpec.Tags = t // Handler tags overwrite group tags
 			}
-			// This will OVERWRITE any security that was inferred from middleware.
 			if schemes := builder.GetSecurity(); len(schemes) > 0 {
 				req := openapi3.SecurityRequirement{}
 				for _, schemeName := range schemes {
@@ -109,12 +120,11 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode) {
 			spec.Paths.Set(op.FullPath, pathItem)
 		}
 
-		// Use the SetOperation method to attach the final, combined operation spec.
 		pathItem.SetOperation(strings.ToUpper(op.HTTPMethod), operationSpec)
 	}
 
 	// Recurse into child nodes
 	for _, child := range node.Children {
-		addRoutesToSpec(spec, child)
+		addRoutesToSpec(spec, child, groupMetadata)
 	}
 }

@@ -91,7 +91,7 @@ type State struct {
 
 	Config *config.Config
 
-	// Metadata MetadataMap
+	GroupMetadata model.GroupMetadataMap
 }
 
 // NewState creates a new State instance.
@@ -113,14 +113,14 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 			Constants: make(map[types.Object]*ast.ValueSpec),
 		},
 		// Initialize flow analysis fields
-		Worklist:    make([]WorklistItem, 0),
-		ExprResults: make(map[ast.Expr]*TrackedValue),
-		VarValues:   make(map[types.Object]*TrackedValue),
-		processed:   make(map[ast.Node]bool),
-		RouteGraph:  &model.RouteNode{PathPrefix: "/"},
-		SchemaGen:   NewSchemaGenerator(),
-		Config:      cfg,
-		// Metadata:    make(MetadataMap),
+		Worklist:      make([]WorklistItem, 0),
+		ExprResults:   make(map[ast.Expr]*TrackedValue),
+		VarValues:     make(map[types.Object]*TrackedValue),
+		processed:     make(map[ast.Node]bool),
+		RouteGraph:    &model.RouteNode{PathPrefix: "/"},
+		SchemaGen:     NewSchemaGenerator(),
+		Config:        cfg,
+		GroupMetadata: make(model.GroupMetadataMap),
 	}
 
 	// Immediately run the resolver to populate our type map.

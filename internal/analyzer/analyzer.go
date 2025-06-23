@@ -40,8 +40,9 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 	// Perform analysis phases.
 	state.discoverUniverse()
 	state.performDataFlowAnalysis()
+	state.FindGroupMetadata()
 	state.analyzeHandlers()
-	state.FindAndApplyGroupMetadata()
+	// state.FindAndApplyGroupMetadata()
 
 	// Log analysis completion.
 	fmt.Println("✅ Analysis complete. All phases executed successfully.")
@@ -49,6 +50,7 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 	// Create an API model.
 	apiModel := &model.APIModel{}
 	apiModel.RouteGraph = state.RouteGraph
+	apiModel.GroupMetadata = state.GroupMetadata
 
 	// Initialize components if not set.
 	if apiModel.Components == nil {

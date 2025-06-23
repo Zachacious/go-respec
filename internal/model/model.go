@@ -7,11 +7,17 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// GroupMetadataMap is defined here to be shared across packages.
+type GroupMetadataMap map[types.Object]*respec.GroupBuilder
+
 // APIModel is the top-level container for the entire discovered API.
 type APIModel struct {
 	openapi3.T
 	// RouteGraph represents the routing tree of the API.
 	RouteGraph *RouteNode
+
+	// Components holds reusable components like schemas and security schemes.
+	GroupMetadata GroupMetadataMap
 }
 
 // RouteNode represents a single routing scope (a router or a group).
@@ -29,6 +35,8 @@ type RouteNode struct {
 	Operations []*Operation
 	// InferredSecurity holds the names of security schemes inferred from middleware.
 	InferredSecurity []string
+	// Holds tags from respec.Meta() calls for hierarchical application.
+	Tags []string
 }
 
 // Operation represents a single API endpoint (e.g., GET /users/{id}).
