@@ -13,15 +13,11 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// responseInfo holds information about a response.
 type responseInfo struct {
-	// Type is the type of the response body.
-	Type types.Type
-	// Description is a description of the response.
+	Type        types.Type
 	Description string
 }
 
-// analyzeHandlers analyzes handlers and generates schemas.
 func (s *State) analyzeHandlers() {
 	fmt.Println("Phase 5: Analyzing handlers and generating schemas...")
 	s.traverseAndAnalyze(s.RouteGraph)
@@ -50,17 +46,19 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		return
 	}
 
+	// --- Layer 2: Doc Comment Inference ---
 	if funcDecl.Doc != nil {
 		if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
 			op.Spec.Summary = parsedComment.Summary
 			op.Spec.Description = parsedComment.Description
-			op.Spec.Tags = parsedComment.Tags
+			// Note: Tags from doc comments will be merged in the assembler
 		}
 	}
 	if op.Spec.Summary == "" {
 		op.Spec.Summary = op.HandlerName
 	}
 
+	// --- Layer 3: Type Inference ---
 	reqType := s.findRequestSchema(funcDecl.Body, s.Config.HandlerPatterns.RequestBody)
 	if reqType != nil {
 		schemaRef := s.SchemaGen.GenerateSchema(reqType)
@@ -76,7 +74,6 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 	}
 	queryParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.QueryParameter, "query", pathParamNames)
 	headerParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.HeaderParameter, "header", nil)
-
 	for _, p := range queryParams {
 		op.Spec.AddParameter(p.Value)
 	}
@@ -90,21 +87,14 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		if info.Type != nil {
 			schemaRef = s.SchemaGen.GenerateSchema(info.Type)
 		}
-
-		// Prioritize the specific description we inferred from the code.
 		desc := info.Description
-		// If a specific description was not found, use the standard HTTP status text.
 		if desc == "" {
 			desc = http.StatusText(statusCode)
-			// Fallback for non-standard codes.
-			if desc == "" {
-				desc = "Response"
-			}
 		}
-
+		if desc == "" {
+			desc = "Response"
+		}
 		response := openapi3.NewResponse().WithDescription(desc)
-
-		// A 204 response MUST NOT have a body.
 		if statusCode != 204 && schemaRef != nil {
 			response.WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
 		}
@@ -113,6 +103,30 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 
 	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
 		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
+	}
+
+	// --- Layer 1: Apply Explicit Overrides ---
+	if metadata, ok := s.OperationMetadata[op.GoHandler]; ok {
+		if metadata.RequestBodyExpr != nil {
+			if tv, ok := s.getInfoForNode(metadata.RequestBodyExpr).Types[metadata.RequestBodyExpr]; ok {
+				schemaRef := s.SchemaGen.GenerateSchema(tv.Type)
+				reqBody := openapi3.NewRequestBody().WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
+				op.Spec.RequestBody = &openapi3.RequestBodyRef{Value: reqBody}
+			}
+		}
+		for code, expr := range metadata.ResponseExprs {
+			if tv, ok := s.getInfoForNode(expr).Types[expr]; ok {
+				schemaRef := s.SchemaGen.GenerateSchema(tv.Type)
+				response := openapi3.NewResponse().WithDescription(http.StatusText(code)).WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
+				op.Spec.AddResponse(code, response)
+			}
+		}
+		if metadata.OperationID != "" {
+			op.Spec.OperationID = metadata.OperationID
+		}
+		if metadata.Deprecated {
+			op.Spec.Deprecated = true
+		}
 	}
 }
 

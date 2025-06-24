@@ -1,11 +1,13 @@
-![Go Respec](images/respec.jpg)
-
 <h1 align="center">📘 respec</h1>
 <p align="center"><em>Forget magic comments. If your Go source code is your source of truth, then <strong>respec</strong> is the static analysis tool you've been waiting for.</em></p>
 
 <p align="center">
   <strong>Generate OpenAPI v3 specs from Go code — cleanly, powerfully, and without polluting your codebase with annotations.</strong>
 </p>
+
+---
+
+![Go Respec](images/respec2.png)
 
 ---
 

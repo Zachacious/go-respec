@@ -2,15 +2,11 @@ package analyzer
 
 import (
 	"go/ast"
-	"strconv"
 
 	"github.com/Zachacious/go-respec/respec"
 )
 
-// const respecHandlerFuncPath = "github.com/Zachacious/go-respec/respec.Handler"
-
-// FindAndParseRouteMetadata scans the AST for `respec.Handler(...).Unwrap()` call chains,
-// parses the metadata, and stores it in a map keyed by the handler's types.Object.
+// FindAndParseRouteMetadata scans the AST for `respec.Handler(...).Unwrap()` call chains.
 func (s *State) FindAndParseRouteMetadata() {
 	for _, pkg := range s.pkgs {
 		for _, file := range pkg.Syntax {
@@ -33,80 +29,83 @@ func (s *State) FindAndParseRouteMetadata() {
 				if handlerObj := s.getObjectForExpr(handlerExpr); handlerObj != nil {
 					s.OperationMetadata[handlerObj] = metadata
 				}
-
 				return false
 			})
 		}
 	}
 }
 
-// parseHandlerChain walks a call chain backwards to parse metadata and find the root call.
+// parseHandlerChain walks a call chain backwards to parse metadata.
 func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.Expr) {
 	metadata := &respec.HandlerMetadata{
-		Tags:     []string{},
-		Security: []string{},
+		ResponseExprs: make(map[int]ast.Expr),
 	}
 	currentExpr := expr
 
-	// Walk backwards through a chain of calls like: A().B().C()
 	for {
-		call, ok := currentExpr.(*ast.CallExpr)
-		if !ok {
-			// This means we've reached the start of the chain.
+		call, isCall := currentExpr.(*ast.CallExpr)
+		if !isCall {
 			break
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			// This should not happen in a valid chain.
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		if !isSel {
 			break
 		}
 
 		methodName := sel.Sel.Name
-		argValues := extractStringArgs(call)
 
-		// This switch handles the metadata methods like .Tag(), .Security(), etc.
-		// The case "Handler" is for the root of the chain.
 		switch methodName {
 		case "Summary":
-			if len(argValues) > 0 {
-				metadata.Summary = argValues[0]
+			if str, ok := s.resolveStringValue(call.Args[0]); ok {
+				metadata.Summary = str
 			}
 		case "Description":
-			if len(argValues) > 0 {
-				metadata.Description = argValues[0]
+			if str, ok := s.resolveStringValue(call.Args[0]); ok {
+				metadata.Description = str
 			}
 		case "Tag":
-			metadata.Tags = append(metadata.Tags, argValues...)
+			for _, arg := range call.Args {
+				if str, ok := s.resolveStringValue(arg); ok {
+					metadata.Tags = append(metadata.Tags, str)
+				}
+			}
 		case "Security":
-			if len(argValues) > 0 {
-				metadata.Security = append(metadata.Security, argValues[0])
+			if str, ok := s.resolveStringValue(call.Args[0]); ok {
+				metadata.Security = append(metadata.Security, str)
+			}
+		case "RequestBody":
+			if len(call.Args) > 0 {
+				metadata.RequestBodyExpr = call.Args[0]
+			}
+		case "AddResponse":
+			if len(call.Args) == 2 {
+				if code, ok := s.resolveIntValue(call.Args[0]); ok {
+					metadata.ResponseExprs[code] = call.Args[1]
+				}
+			}
+		case "OperationID":
+			if str, ok := s.resolveStringValue(call.Args[0]); ok {
+				metadata.OperationID = str
+			}
+		case "Deprecate":
+			if val, ok := getBoolValue(call.Args[0]); ok {
+				metadata.Deprecated = val
 			}
 		case "Handler":
-			// This is the root call. The chain walk is complete.
-			// The argument to this call is the actual handler function we need.
 			if len(call.Args) == 1 {
 				return metadata, call.Args[0]
 			}
-			return nil, nil // Invalid Handler() call.
+			return nil, nil
 		}
-
-		// Move to the previous expression in the chain (the receiver of the call).
 		currentExpr = sel.X
 	}
-
-	// If the loop completes without finding a "Handler" method, it's not a valid chain.
 	return nil, nil
 }
 
-// extractStringArgs is a helper to get string literal values from call arguments.
-func extractStringArgs(call *ast.CallExpr) []string {
-	var values []string
-	for _, arg := range call.Args {
-		if lit, ok := arg.(*ast.BasicLit); ok {
-			if val, err := strconv.Unquote(lit.Value); err == nil {
-				values = append(values, val)
-			}
-		}
+// getBoolValue is a simple helper to resolve a boolean literal.
+func getBoolValue(expr ast.Expr) (bool, bool) {
+	if ident, ok := expr.(*ast.Ident); ok {
+		return ident.Name == "true", true
 	}
-	return values
+	return false, false
 }
