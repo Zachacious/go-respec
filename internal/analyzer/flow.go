@@ -1,7 +1,6 @@
 package analyzer
 
 import (
-	"fmt"
 	"go/ast"
 	"go/types"
 	"slices"
@@ -10,25 +9,32 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-// performDataFlowAnalysis starts the data flow analysis from initial router variables.
+// performDataFlowAnalysis performs data flow analysis on the router initialization sources.
 func (s *State) performDataFlowAnalysis() {
 	initialRouterVars := s.findInitialRouterVars()
-	fmt.Printf(" [Info] Found %d router initialization sources.\n", len(initialRouterVars))
-
+	var worklist []*types.Var
 	for _, v := range initialRouterVars {
+		worklist = append(worklist, v)
+	}
+
+	for len(worklist) > 0 {
+		v := worklist[0]
+		worklist = worklist[1:]
 		s.findAndProcessUsages(v)
 	}
-	fmt.Printf(" [Info] Worklist processing complete.\n")
 }
 
-// findInitialRouterVars finds variables initialized with a configured router type.
+// findInitialRouterVars finds the initial router variables.
 func (s *State) findInitialRouterVars() []*types.Var {
 	var initialVars []*types.Var
 	for _, pkg := range s.pkgs {
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
 				assign, ok := n.(*ast.AssignStmt)
-				if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+				if !ok {
+					return true
+				}
+				if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 					return true
 				}
 				callExpr, ok := assign.Rhs[0].(*ast.CallExpr)
@@ -44,16 +50,18 @@ func (s *State) findInitialRouterVars() []*types.Var {
 					if sig.Results().Len() == 1 {
 						if resolvedType := s.isResolvedRouterType(sig.Results().At(0).Type()); resolvedType != nil {
 							if ident, ok := assign.Lhs[0].(*ast.Ident); ok {
-								if obj, ok := info.Defs[ident].(*types.Var); ok {
-									node := &model.RouteNode{GoVar: obj, Parent: s.RouteGraph}
-									s.RouteGraph.Children = append(s.RouteGraph.Children, node)
-									trackedVal := &TrackedValue{
-										Source:    callExpr,
-										RouterDef: resolvedType.Definition,
-										Node:      node,
+								if obj := info.Defs[ident]; obj != nil {
+									if v, ok := obj.(*types.Var); ok {
+										node := &model.RouteNode{GoVar: v, Parent: s.RouteGraph}
+										s.RouteGraph.Children = append(s.RouteGraph.Children, node)
+										trackedVal := &TrackedValue{
+											Source:    callExpr,
+											RouterDef: resolvedType.Definition,
+											Node:      node,
+										}
+										s.VarValues[v] = trackedVal
+										initialVars = append(initialVars, v)
 									}
-									s.VarValues[obj] = trackedVal
-									initialVars = append(initialVars, obj)
 								}
 							}
 						}
@@ -66,7 +74,7 @@ func (s *State) findInitialRouterVars() []*types.Var {
 	return initialVars
 }
 
-// findAndProcessUsages finds all usages of a variable `v` and processes them.
+// findAndProcessUsages finds and processes the usages of a variable.
 func (s *State) findAndProcessUsages(v *types.Var) {
 	initialValue, ok := s.VarValues[v]
 	if !ok {
@@ -89,12 +97,12 @@ func (s *State) findAndProcessUsages(v *types.Var) {
 				if len(path) < 2 {
 					return true
 				}
+				parent := path[1]
 
-				if selExpr, ok := path[1].(*ast.SelectorExpr); ok {
+				if selExpr, ok := parent.(*ast.SelectorExpr); ok {
 					if len(path) > 2 {
 						if callExpr, ok := path[2].(*ast.CallExpr); ok && callExpr.Fun == selExpr {
 							s.processMethodCall(initialValue, callExpr, file)
-							return false
 						}
 					}
 				}
@@ -104,7 +112,7 @@ func (s *State) findAndProcessUsages(v *types.Var) {
 	}
 }
 
-// processMethodCall analyzes a method call on a tracked router value.
+// processMethodCall processes a method call.
 func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr, file *ast.File) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -113,7 +121,6 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 	methodName := selExpr.Sel.Name
 	routerDef := currentValue.RouterDef
 
-	// Case 1: Endpoint method
 	if slices.Contains(routerDef.EndpointMethods, methodName) {
 		var handlerFuncDecl *ast.FuncDecl
 		if len(call.Args) >= 2 {
@@ -123,13 +130,12 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 			}
 		}
 		s.buildRouteFromCall(currentValue, call, handlerFuncDecl)
-		return // End of this chain
+		return
 	}
 
 	isGroupMethod := slices.Contains(routerDef.GroupMethods, methodName)
 	isMiddlewareMethod := slices.Contains(routerDef.MiddlewareWrapperMethods, methodName)
 
-	// Case 2: Chaining method
 	if isGroupMethod || isMiddlewareMethod {
 		pathPrefix := ""
 		if isGroupMethod && len(call.Args) > 0 {
@@ -147,76 +153,41 @@ func (s *State) processMethodCall(currentValue *TrackedValue, call *ast.CallExpr
 			PathPrefix: pathPrefix,
 			Node:       newNode,
 		}
-		// Associate the result of this call expression with the new tracked value.
-		s.ExprResults[call] = newVal
 
 		if isMiddlewareMethod {
 			for _, arg := range call.Args {
 				if middlewareObj := s.getObjectForExpr(arg); middlewareObj != nil {
 					inferredSchemes := s.analyzeMiddleware(middlewareObj)
-					currentValue.Node.InferredSecurity = append(currentValue.Node.InferredSecurity, inferredSchemes...)
+					newNode.InferredSecurity = append(newNode.InferredSecurity, inferredSchemes...)
 				}
 			}
 		}
 
-		// Look for a function literal argument to trace into a new scope.
+		path, found := s.findPathToNode(call)
+		if found && len(path) > 1 {
+			parent := path[1]
+			if parentSel, ok := parent.(*ast.SelectorExpr); ok && parentSel.X == call {
+				if len(path) > 2 {
+					if parentCall, ok := path[2].(*ast.CallExpr); ok && parentCall.Fun == parentSel {
+						s.processMethodCall(newVal, parentCall, file)
+					}
+				}
+			}
+		}
+
 		for _, arg := range call.Args {
 			if funcLit, ok := arg.(*ast.FuncLit); ok {
-				if funcLit.Body != nil && len(funcLit.Type.Params.List) > 0 && len(funcLit.Type.Params.List[0].Names) > 0 {
+				if len(funcLit.Type.Params.List) > 0 && len(funcLit.Type.Params.List[0].Names) > 0 {
 					paramIdent := funcLit.Type.Params.List[0].Names[0]
 					if info := s.getInfoForNode(paramIdent); info != nil {
 						if paramObj, ok := info.Defs[paramIdent].(*types.Var); ok {
-							s.findAndProcessUsagesInScope(file, funcLit.Body, paramObj, newVal)
+							newNode.GoVar = paramObj
+							s.VarValues[paramObj] = newVal
+							s.findAndProcessUsages(paramObj)
 						}
 					}
 				}
 			}
 		}
-
-		// ** THIS BLOCK IS NEW **
-		// After processing this call, check if its result is used in another call
-		// to handle chains like r.With(...).Post(...).
-		path, _ := astutil.PathEnclosingInterval(file, call.Pos(), call.End())
-		if len(path) > 1 {
-			// The parent of a CallExpr in a chain is the SelectorExpr of the next call.
-			if nextSel, ok := path[1].(*ast.SelectorExpr); ok {
-				if len(path) > 2 {
-					// The grandparent is the full next call expression.
-					if nextCall, ok := path[2].(*ast.CallExpr); ok && nextCall.Fun == nextSel {
-						s.processMethodCall(newVal, nextCall, file)
-					}
-				}
-			}
-		}
 	}
-}
-
-// findAndProcessUsagesInScope is a correctly scoped analysis function.
-func (s *State) findAndProcessUsagesInScope(file *ast.File, scope ast.Node, v *types.Var, trackedVal *TrackedValue) {
-	s.VarValues[v] = trackedVal
-
-	ast.Inspect(scope, func(n ast.Node) bool {
-		ident, ok := n.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		info := s.getInfoForNode(ident)
-		if info == nil || info.Uses[ident] != v {
-			return true
-		}
-
-		path, _ := astutil.PathEnclosingInterval(file, ident.Pos(), ident.End())
-		if len(path) < 2 {
-			return true
-		}
-		if selExpr, ok := path[1].(*ast.SelectorExpr); ok {
-			if len(path) > 2 {
-				if callExpr, ok := path[2].(*ast.CallExpr); ok && callExpr.Fun == selExpr {
-					s.processMethodCall(trackedVal, callExpr, file)
-					return false
-				}
-			}
-		}
-		return true
-	})
 }

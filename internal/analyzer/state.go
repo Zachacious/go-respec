@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 
 	"github.com/Zachacious/go-respec/internal/config"
@@ -58,6 +59,7 @@ type ResolvedType struct {
 // State is the central data structure that holds all information
 // gathered during the multi-phase analysis of the target project.
 type State struct {
+	Fset *token.FileSet
 	// The initial loaded packages for the entire project.
 	pkgs []*packages.Package
 
@@ -109,7 +111,14 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 		}
 	}
 
+	// All packages in a single load share the same FileSet.
+	var fset *token.FileSet
+	if len(pkgs) > 0 {
+		fset = pkgs[0].Fset
+	}
+
 	s := &State{
+		Fset:                fset,
 		pkgs:                pkgs,
 		fileTypeInfo:        fileInfoMap,
 		ResolvedRouterTypes: make(map[string]*ResolvedType),

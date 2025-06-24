@@ -11,8 +11,6 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// buildRouteFromCall is the entry point for Phase 4.
-// It's called by the data flow engine when a route registration method call (a "sink") is found.
 func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handlerDecl *ast.FuncDecl) {
 	selExpr, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -35,22 +33,25 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 
 	handlerArg := call.Args[1]
 	var handlerObj types.Object
+	var originalHandlerDecl *ast.FuncDecl = handlerDecl
+	finalHandlerExpr := handlerArg
 
-	if c, ok := handlerArg.(*ast.CallExpr); ok {
-		if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unwrap" {
-			_, realHandlerExpr := s.parseHandlerChain(sel.X)
-			if realHandlerExpr != nil {
-				handlerObj = s.getObjectForExpr(realHandlerExpr)
+	if callExpr, ok := handlerArg.(*ast.CallExpr); ok {
+		if sel, ok := callExpr.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unwrap" {
+			if _, realHandler := s.parseHandlerChain(sel.X); realHandler != nil {
+				finalHandlerExpr = realHandler
 			}
-		} else {
-			handlerObj = s.getObjectForExpr(handlerArg)
 		}
-	} else {
-		handlerObj = s.getObjectForExpr(handlerArg)
 	}
+
+	handlerObj = s.getObjectForExpr(finalHandlerExpr)
 
 	if handlerObj == nil {
 		return
+	}
+
+	if originalHandlerDecl == nil || s.getObjectForExpr(handlerArg) != handlerObj {
+		originalHandlerDecl = s.Universe.Functions[handlerObj]
 	}
 
 	op := &model.Operation{
@@ -71,15 +72,14 @@ func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handle
 	routeNode := val.Node
 	routeNode.Operations = append(routeNode.Operations, op)
 
-	// Auto-detect path parameters
 	re := regexp.MustCompile(`\{(\w+)\}`)
 	matches := re.FindAllStringSubmatch(fullPath, -1)
 	for _, match := range matches {
 		if len(match) > 1 {
 			paramName := match[1]
 			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
-			if handlerDecl != nil && handlerDecl.Body != nil {
-				s.inferPathParameterType(handlerDecl.Body, param)
+			if originalHandlerDecl != nil && originalHandlerDecl.Body != nil {
+				s.inferPathParameterType(originalHandlerDecl.Body, param)
 			}
 			op.Spec.AddParameter(param)
 		}
@@ -110,7 +110,6 @@ func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Para
 			return true
 		}
 
-		// FIX: Use the new getFuncPath helper.
 		if funObj := info.Uses[selExpr.Sel]; funObj != nil && getFuncPath(funObj) == "github.com/go-chi/chi/v5.URLParam" {
 			if len(call.Args) == 2 {
 				if nameLit, ok := call.Args[1].(*ast.BasicLit); ok {
@@ -160,11 +159,10 @@ func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Para
 			}
 
 			if funObj != nil {
-				// FIX: Use the new getFuncPath helper.
 				switch getFuncPath(funObj) {
 				case "strconv.Atoi", "strconv.ParseInt":
 					param.Schema.Value.Type = &openapi3.Types{"integer"}
-					return false // Type found, stop searching.
+					return false
 				case "strconv.ParseFloat":
 					param.Schema.Value.Type = &openapi3.Types{"number"}
 					param.Schema.Value.Format = "double"
@@ -183,26 +181,22 @@ func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Para
 // complete path for an endpoint, prepending all parent prefixes.
 func (s *State) assembleFullPath(val *TrackedValue, endpointPath string) string {
 	var prefixes []string
-	// Walk up the chain, collecting prefixes in reverse order.
 	for current := val; current != nil; current = current.Parent {
 		if current.PathPrefix != "" {
 			prefixes = append(prefixes, current.PathPrefix)
 		}
 	}
 
-	// Build the final path by joining the prefixes (in correct order) and the endpoint path.
 	var finalPath strings.Builder
 	for i := len(prefixes) - 1; i >= 0; i-- {
 		finalPath.WriteString(strings.TrimSuffix(prefixes[i], "/"))
 	}
 
-	// Ensure there's a slash before the endpoint path if needed.
 	if !strings.HasPrefix(endpointPath, "/") {
 		finalPath.WriteString("/")
 	}
 	finalPath.WriteString(endpointPath)
 
-	// Handle the case of an empty path resulting in just "/"
 	if finalPath.Len() == 0 {
 		return "/"
 	}

@@ -152,7 +152,7 @@ func Load(projectPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// A helper to get sanitized security schemes, which you might want to move to the config package.
+// GetSecuritySchemes is a helper to get sanitized security schemes.
 func (c *Config) GetSecuritySchemes() openapi3.SecuritySchemes {
 	schemes := make(openapi3.SecuritySchemes)
 	if c.SecuritySchemes == nil {

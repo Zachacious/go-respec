@@ -1,11 +1,14 @@
 package analyzer
 
 import (
+	"bytes"
 	"go/ast"
 	"go/constant"
+	"go/printer"
 	"go/token"
 	"go/types"
 	"strconv"
+	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -61,8 +64,7 @@ func (s *State) isResolvedRouterType(t types.Type) *ResolvedType {
 	return nil
 }
 
-// getObjectForExpr is a robust helper to find the types.Object for any expression
-// that resolves to a named entity (a variable, function, etc.).
+// getObjectForExpr provides the definitive implementation for resolving an expression to its type object.
 func (s *State) getObjectForExpr(expr ast.Expr) types.Object {
 	info := s.getInfoForNode(expr)
 	if info == nil {
@@ -75,38 +77,38 @@ func (s *State) getObjectForExpr(expr ast.Expr) types.Object {
 			return obj
 		}
 		return info.Defs[e]
+
 	case *ast.SelectorExpr:
+		if sel := info.Selections[e]; sel != nil {
+			return sel.Obj()
+		}
 		return info.Uses[e.Sel]
+
 	case *ast.CallExpr:
 		tv, ok := info.Types[e.Fun]
 		if ok && tv.IsType() && len(e.Args) == 1 {
 			return s.getObjectForExpr(e.Args[0])
 		}
 	}
+
 	return nil
 }
 
 // getFuncPath constructs a fully qualified path for a function object.
-// e.g., "net/http.ResponseWriter.Write" or "strconv.Atoi"
 func getFuncPath(obj types.Object) string {
 	if obj == nil {
 		return ""
 	}
-
 	fn, ok := obj.(*types.Func)
 	if !ok {
-		// Not a function object, so it has no function path.
 		return ""
 	}
-
-	// Check if it's a method by looking for a receiver.
 	if sig := fn.Type().(*types.Signature); sig != nil && sig.Recv() != nil {
-		// It's a method. The full name includes the receiver type.
-		// sig.Recv().Type().String() correctly gives us the full type name, e.g., "*github.com/go-chi/chi/v5.Mux"
-		return sig.Recv().Type().String() + "." + fn.Name()
+		// THIS IS THE FIX: Trim the leading '*' from pointer receiver types
+		// to ensure it matches the path string defined in the .respec.yaml config.
+		receiverType := sig.Recv().Type().String()
+		return strings.TrimPrefix(receiverType, "*") + "." + fn.Name()
 	}
-
-	// It's a regular function.
 	if fn.Pkg() == nil {
 		return ""
 	}
@@ -114,21 +116,16 @@ func getFuncPath(obj types.Object) string {
 }
 
 // resolveIntValue attempts to resolve an expression to an integer value.
-// It supports basic literals and constant expressions.
 func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 	info := s.getInfoForNode(expr)
 	if info == nil {
 		return 0, false
 	}
-
-	// Case 1: It's a basic literal number, e.g., 201
 	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
 		if val, err := strconv.Atoi(lit.Value); err == nil {
 			return val, true
 		}
 	}
-
-	// Case 2: It's an identifier for a constant, e.g., http.StatusOK
 	if ident, ok := expr.(*ast.Ident); ok {
 		if obj := info.Uses[ident]; obj != nil {
 			if c, ok := obj.(*types.Const); ok {
@@ -138,7 +135,6 @@ func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 			}
 		}
 	}
-	// Case 3: It's a selector for a constant, e.g. http.StatusOK
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if obj := info.Uses[sel.Sel]; obj != nil {
 			if c, ok := obj.(*types.Const); ok {
@@ -148,12 +144,10 @@ func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 			}
 		}
 	}
-
 	return 0, false
 }
 
 // resolveStringValue attempts to resolve an expression to a string value.
-// It supports basic string literals, constant strings, and binary string concatenations.
 func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
@@ -181,4 +175,24 @@ func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// SprintNode converts an AST node back to its string representation.
+func (s *State) SprintNode(node ast.Node) string {
+	if node == nil {
+		return "<nil>"
+	}
+	var buf bytes.Buffer
+	fset := s.Fset
+	if fset == nil && len(s.pkgs) > 0 {
+		fset = s.pkgs[0].Fset
+	}
+	if fset == nil {
+		return "<error: no fset>"
+	}
+	err := printer.Fprint(&buf, fset, node)
+	if err != nil {
+		return "<error: " + err.Error() + ">"
+	}
+	return buf.String()
 }
