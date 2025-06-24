@@ -1,65 +1,76 @@
-![Go Reference](images/respec.jpg)
+![Go Respec](images/respec.jpg)
 
-# respec
+<h1 align="center">📘 respec</h1>
+<p align="center"><em>Forget magic comments. If your Go source code is your source of truth, then <strong>respec</strong> is the static analysis tool you've been waiting for.</em></p>
 
-> Forget magic comments. If your code is your source-of-truth, then you want a tool that generates your OpenAPI spec from your Go source code without cluttering it with annotations.
-> RESPEC is that tool. Genernate OpenAPI v3 spec automatically from inferrence, and easy overrides.
+<p align="center">
+  <strong>Generate OpenAPI v3 specs from Go code — cleanly, powerfully, and without polluting your codebase with annotations.</strong>
+</p>
 
-**respec** is a powerful, framework-agnostic CLI tool that introspects your Go source code to generate a production-grade OpenAPI specification. It is built on a philosophy of smart inference, sensible defaults, and explicit-but-unobtrusive overrides.
+---
+
+## 💡 What is respec?
+
+respec is a powerful, framework-agnostic CLI tool that introspects your Go source code to generate a production-grade OpenAPI specification.
+
+It is built on a philosophy of:
+
+- smart inference
+- sensible defaults
+- explicit—but unobtrusive—overrides
 
 ---
 
 ## 🚨 Disclaimer
 
-This is a new and experimental project that I created for my own purposes after being unhappy with existing solutions that rely heavily on "magic comments" polluting the source code.
+This is a new and experimental project built primarily for my own needs after being frustrated with existing tools that rely heavily on "magic comments."
 
-It is designed to be robust and has been tested on a non-trivial chi project, but I consider it to be in a beta stage. I am actively looking for feedback and am happy to help anyone make this work for their project.
+It is beta-quality but robust, having been tested against a non-trivial chi project. Feedback and contributions are welcome!
 
 ---
 
 ## 🧠 The respec Philosophy
 
-Traditional OpenAPI generators for Go often require you to litter your code with special annotations or "magic comments". This couples your documentation tightly to your implementation and clutters your source code.
+Traditional OpenAPI generators require you to annotate your code to death. Not respec.
 
-**respec** is different. It uses a 3-layer approach to generating a specification, prioritizing convention and inference over explicit annotation.
+respec uses a 3-layered design:
 
-### Layer 1: Explicit Metadata API (Highest Priority)
+### 1️⃣ Layer 1: Explicit Metadata API (Highest Priority)
 
-For ultimate control, `respec` provides a clean, fluent Go API to wrap your route definitions. This allows you to explicitly override any inferred value, from a description to a security scheme. This is your "escape hatch" for perfecting the spec.
+Override inferred values in your Go code using a clean, fluent API — route by route.
 
-### Layer 2: Doc Comments (Fallback)
+### 2️⃣ Layer 2: Doc Comments (Fallback)
 
-If no explicit metadata is provided, `respec` will intelligently parse the standard Go doc comments above your handler functions to use as the summary and description for an operation.
+respec parses doc comments when metadata is missing.
 
-### Layer 3: Smart Inference (The Foundation)
+### 3️⃣ Layer 3: Smart Inference (Default)
 
-This is where the magic happens. The powerful static analysis engine at the core of `respec` reads your source code to infer almost everything:
+The static analysis engine infers:
 
-- The routing tree, including groups and middleware chains.
-- Path, query, and header parameters.
-- Request body objects.
-- Multiple response codes and their corresponding schemas.
+- Routing structure and middleware
+- Operation summaries from functions
+- Query/path/header parameters
+- Request/response bodies
+- Multiple response codes and schemas
 
-This layered approach means you get a high-quality spec out-of-the-box with minimal effort, while still having powerful tools to refine it when needed.
+You get a full working spec with minimal effort — and the tools to perfect it.
 
 ---
 
 ## ✨ Features
 
-- 🧼 **Zero Magic Comments**: Keep your source code clean and free of special annotations.
-- 🧠 **Powerful Static Analysis**: Intelligently infers routes, request bodies, responses, parameters, and more.
-- 🔌 **Framework-Agnostic**: Works with any Go web framework (`chi`, `gin`, `echo`, etc.) through a simple configuration file.
-- ⚙️ **Configurable Inference**: A comprehensive `.respec.yaml` file allows you to teach `respec` about your project's custom helper functions.
-- 🧱 **Three-Layered System**: Intelligent hierarchy of inference, doc comments, and explicit Go API.
-- 🧩 **Middleware-Aware**: Can infer properties like security schemes by analyzing the middleware applied to your routes.
+- 🧼 Zero Magic Comments — no annotations or clutter
+- 🧠 Powerful Static Analysis — routes, parameters, schemas, and more auto-detected
+- 🔌 Framework Agnostic — works with chi, gin, echo, and more
+- ⚙️ Configurable Inference — fully customizable via .respec.yaml
+- 🧱 Three-Layered Inference — convention over configuration, with overrides when needed
+- 🧩 Middleware-Aware — detects security and route scopes from applied middleware
 
 ---
 
 ## 🚀 Installation
 
-You can install respec in two ways:
-
-### Via `go install` (Recommended)
+### Via go install (Recommended)
 
 ```bash
 go install github.com/Zachacious/go-respec/cmd/respec@latest
@@ -67,343 +78,219 @@ go install github.com/Zachacious/go-respec/cmd/respec@latest
 
 ### From Release Binaries
 
-Alternatively, you can download the pre-compiled binary for your operating system from the [GitHub Releases page](https://github.com/Zachacious/go-respec/releases).
+Download the appropriate binary from the [Releases](https://github.com/Zachacious/go-respec/releases) page for your OS.
 
 ---
 
 ## ⚡ Quick Start
 
-1. Navigate to your project's root directory:
+1. From your project root:
 
 ```bash
 cd /path/to/your/project
 ```
 
-2. Generate your specification:
+2. Initialize respec: (global settings)
 
-```bash
-respec
+```
+respec init
 ```
 
-3. Inspect `openapi.yaml`. You will find a surprisingly complete specification generated entirely from your source code.
+3. Generate a spec:
+
+```bash
+respec . -o openapi.yaml
+```
+
+3. Inspect the generated openapi.yaml — you’ll find a surprisingly complete spec.
 
 ---
 
-### Go Metadata API Reference
+## 📦 Metadata API Reference (Layer 1)
 
-This is the Layer 1 override system. It gives you explicit, code-level control over the generated spec for any endpoint. It is designed to be an unobtrusive "decorator" for your existing handler functions.
+respec allows you to decorate your handlers for full control over the spec.
 
-Start by importing the `respec` library:
+### ✅ Import the Library
 
 ```go
 import "github.com/Zachacious/go-respec/respec"
 ```
 
-`respec.Handler`
-You simply wrap your handler function inside a `respec.Handler()` call and then chain methods to add metadata.
+---
 
-**Before:**
+### 📍 respec.Handler() for Individual Routes
+
+Upgrade your route handlers like this:
+
+Before:
 
 ```go
 r.With(mw.Authenticator).Post("/users", userHandlers.Create)
 ```
 
-**After:**
+After:
 
 ```go
 r.With(mw.Authenticator).Post("/users",
-    respec.Handler(userHandlers.Create).
-        Tag("User Management").
-        Summary("Create a new system user").
-        Security("BearerAuth"),
+  respec.Handler(userHandlers.Create).
+    Tag("User Management").
+    Summary("Create a new system user").
+    Security("BearerAuth").
+    Unwrap(),
 )
 ```
 
-`respec.Group`
-To apply metadata to an entire block of routes, you can wrap the block's function literal in `respec.Group()`. The static analyzer will apply the chained metadata to every endpoint defined within that block.
+> Note: .Unwrap() is required to return the original handler func.
+
+---
+
+### 📍 respec.Meta() for Group Routes
+
+Wrap a routing group to apply metadata to all routes inside:
 
 ```go
-r.Route("/admin", respec.Group(func() {
-    // Every route inside this block will automatically get the "Admin" tag
-    // and the "AdminSecurity" scheme applied.
-    r.Get("/users", respec.Handler(admin.ListUsers))
-    r.Post("/users", respec.Handler(admin.CreateUser))
-    r.Delete("/users/{id}", respec.Handler(admin.DeleteUser))
-}).
-    Tag("Admin").
-    Security("AdminSecurity"))
-```
-
-**Available Methods:**
-All methods are chainable and can be called in any order on both `respec.Handler` and `respec.Group`.
-
-- `.Summary(string)`
-  Overrides the inferred summary for the operation. This is typically the one-line title in API documentation.
-
-```go
-respec.Route(r.Get("/{id}", handler)).Summary("Get User by ID")
-```
-
-- `.Description(string)`
-  Overrides the inferred `description` for the operation. This is the longer, more detailed explanation.
-
-```go
-respec.Route(r.Get("/{id}", handler)).
-    Description("Retrieves a single user object, including their profile and roles.")
-```
-
-- `.Tag(...string)`
-  Adds one or more tags to the operation, which is used for grouping in documentation UIs like Swagger UI.
-
-```go
-// Single tag
-respec.Route(r.Get("/{id}", handler)).Tag("User Management")
-
-// Multiple tags
-respec.Route(r.Get("/{id}/sessions", handler)).Tag("User Management", "Sessions")
-```
-
-- `.Security(string)`
-  Applies a security scheme to the operation. The string must match a key you have defined in the `securitySchemes` section of your `.respec.yaml` file. This overrides any security inferred from middleware.
-
-```go
-respec.Route(r.Get("/{id}", handler)).Security("BearerAuth")
-```
-
-- `.OverrideParam(name string, modifier func(*openapi3.Parameter))`
-  (Advanced) Provides fine-grained control over a single parameter. The modifier function receives the inferred parameter object, allowing you to change any of its properties.
-
-```go
-respec.Route(r.Get("/{id}", handler)).
-    OverrideParam("id", func(p *openapi3.Parameter) {
-        p.Description = "The unique identifier of the user (UUID)."
-        p.Schema.Value.Format = "uuid"
-    })
-```
-
-### Grouping Metadata(`respec.Group()`)
-
-You can use `respec.Group()` to apply metadata to an entire block of routes. The analyzer will apply the metadata to every endpoint defined within that group's function literal.
-
-```go
-respec.Group(r.Route("/admin", func(r chi.Router) {
-    // Every route inside this block will automatically get the "Admin" tag
-    // and the "AdminSecurity" scheme applied.
-    r.Get("/users", admin.ListUsers)
-    r.Post("/users", admin.CreateUser)
-    r.Delete("/users/{id}", admin.DeleteUser)
-})).
+r.Route("/admin", func(r chi.Router) {
+  respec.Meta(r).
     Tag("Admin").
     Security("AdminSecurity")
+
+  r.Use(mw.AdminOnly)
+  r.Get("/users", respec.Handler(admin.ListUsers).Unwrap())
+  r.Post("/users", respec.Handler(admin.CreateUser).Unwrap())
+})
+```
+
+---
+
+### 🔄 Available Methods
+
+| Method               | Description                                      | Example (Handler)                | Example (Meta)                   |
+| -------------------- | ------------------------------------------------ | -------------------------------- | -------------------------------- |
+| .Summary(string)     | Short name of the operation                      | .Summary("Get User by ID")       | .Summary("User Administration")  |
+| .Description(string) | Longer operation description                     | .Description("Retrieves a user") | .Description("Manages users...") |
+| .Tag(...string)      | One or more OpenAPI tags                         | .Tag("Users", "Profiles")        | .Tag("Admin")                    |
+| .Security(string)    | Reference to a security scheme in `.respec.yaml` | .Security("BearerAuth")          | .Security("AdminSecurity")       |
+
+---
+
+### 📎 Examples
+
+Summary:
+
+```go
+r.Get("/{id}",
+  respec.Handler(handler).
+    Summary("Get User by ID").
+    Unwrap(),
+)
+```
+
+Description:
+
+```go
+r.Get("/{id}",
+  respec.Handler(handler).
+    Description("Retrieves the user profile.").
+    Unwrap(),
+)
+```
+
+Tags:
+
+```go
+r.Get("/{id}", respec.Handler(handler).Tag("User Management").Unwrap())
+
+// Multiple tags
+r.Get("/{id}/sessions",
+  respec.Handler(handler).
+    Tag("User Management", "Sessions").
+    Unwrap(),
+)
+```
+
+Security:
+
+```go
+r.Get("/me",
+  respec.Handler(handler).
+    Security("BearerAuth").
+    Unwrap(),
+)
 ```
 
 ---
 
 ## 🖥️ CLI Usage
 
-The `respec` command-line interface is simple and straightforward.
-
-### Generate Command (Default)
-
-This is the main command for generating the OpenAPI spec.
-
-**Usage:**
-
-````bash
-respec [path] [flags]
-
-#### Arguments
-
-- `[path]` (optional): The path to the root of your Go project. Defaults to current dir (`.`).
-
-#### Flags
-
-- `-o`, `--output <file>`: Specifies the output file for the spec. The format (YAML or JSON) is automatically determined by the file extension. (default: `openapi.yaml`)
-- `-h`, `--help`: Displays the help message
-
-#### Examples
+### 🌐 Generate Spec (default)
 
 ```bash
-# Default
-respec
+respec [path] [flags]
+```
 
-# Specific path and output
-respec /path/to/project -o ./specs/api.json
-````
+- [path] (optional): directory of your Go project (default: current directory)
+- Flags:
+  - -o, --output <file>: Set output path (use file extension to select YAML or JSON)
+  - -h, --help: Show help
+
+Examples:
+
+```bash
+respec                   # -> generates openapi.yaml
+respec ./project -o api.json
+```
 
 ---
 
-## 🔧 Other Commands
+### 🛠️ Other Commands
 
-### `init`
+| Command         | Description                                   |
+| --------------- | --------------------------------------------- |
+| respec init     | Create default .respec.yaml (non-destructive) |
+| respec version  | Print the current version of the tool         |
+| respec validate | Validate a YAML/JSON spec against OpenAPI 3.1 |
 
-Creates a default `.respec.yaml` file in the current directory. This is the best way to get started with configuration. It will not overwrite an existing file.
-
-```bash
-respec init
-```
-
-### `version`
-
-Prints the current version of the tool.
+Example validate usage:
 
 ```bash
-respec version
-```
-
-#### `validate <file>`
-
-Validates that a given OpenAPI specification file is compliant with the OpenAPI 3.1 standard. It will report any errors it finds.
-
-**Usage:**
-
-```bash
-# Validate the default generated file
 respec validate openapi.yaml
-
-# Validate a JSON spec
 respec validate specs/api.json
 ```
 
 ---
 
-## 📖 Configuration (`.respec.yaml`)
+## 📖 .respec.yaml Configuration
 
-This file is the control panel for the inference engine.
+This file is the control panel for customizing inference. You can generate one with:
 
-### Example:
-
-```yaml
-# .respec.yaml - The Complete Guide
-
-# ---------------------------------------------------------------------------
-# SECTION 1: API Metadata (Recommended)
-# ---------------------------------------------------------------------------
-# Purpose: Defines the high-level information for your OpenAPI specification.
-# When to use: Always. This gives your generated spec a professional title,
-# version, and description.
-# Optional: Yes, but highly recommended. `respec` provides a generic
-# default if this section is omitted.
-info:
-  title: "My API"
-  version: "1.0.0"
-  description: "The complete REST API for the my service."
-
-# ---------------------------------------------------------------------------
-# SECTION 2: Security Schemes (Optional)
-# ---------------------------------------------------------------------------
-# Purpose: Defines the security mechanisms your API uses (e.g., JWT, API Keys).
-# When to use: Use this section to give a name and definition to each security
-# type you use. This definition will be referenced later by securityPatterns.
-# Optional: Yes. Only needed if your API has secured endpoints.
-securitySchemes:
-  # 'BearerAuth' is a custom name you choose. You will use this name later.
-  BearerAuth:
-    type: http # The type of security. 'http' is common for tokens.
-    scheme: bearer # The scheme, e.g., 'bearer' for JWTs.
-    bearerFormat: JWT # A hint about the format.
-
-# ---------------------------------------------------------------------------
-# SECTION 3: Router Definitions (Optional, for non-standard frameworks)
-# ---------------------------------------------------------------------------
-# Purpose: Teaches `respec` the routing syntax of your web framework.
-# When to use: Only if you are using a framework other than Chi or Gin.
-# Optional: Yes. `respec` has built-in defaults for `chi/v5` and `gin-gonic/gin`.
-# You do NOT need to include this section if you use one of those frameworks.
-# It is shown here for educational purposes.
-routerDefinitions:
-  - # This is the built-in definition for the Chi router.
-    type: "github.com/go-chi/chi/v5.Mux"
-    endpointMethods:
-      ["Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "Trace"]
-    groupMethods: ["Route", "Group"]
-    middlewareWrapperMethods: ["With", "Use"]
-
-# ---------------------------------------------------------------------------
-# SECTION 4: Handler Inference Patterns (Optional, for custom helpers)
-# ---------------------------------------------------------------------------
-# Purpose: This is the most powerful section. It teaches `respec` to infer
-# details by recognizing your project's custom helper functions.
-# When to use: When your handlers don't use the standard library directly, but
-# instead use custom utility functions to write responses or bind requests.
-# Optional: Yes. `respec` has built-in magic for standard library functions.
-# You only need to add patterns for your project's specific helpers.
-handlerPatterns:
-  # Defines functions that parse the request body.
-  requestBody:
-    # This teaches respec that `utils.ValidateRequest(&req, ...)` means the
-    # first argument (`argIndex: 0`) is the request body struct.
-    - functionPath: "github.com/me/myservice/internal/utils.ValidateRequest"
-      argIndex: 0
-
-  # Defines functions that write HTTP responses.
-  responseBody:
-    # This pattern matches your `utils.RespondWithJSON` helper.
-    - functionPath: "github.com/me/myservice/internal/utils.RespondWithJSON"
-      statusCodeIndex: 1 # The 2nd argument (index 1) is the status code.
-      dataIndex: 2 # The 3rd argument (index 2) is the response data.
-
-    # This pattern matches your `utils.RespondWithError` helper.
-    - functionPath: "github.com/me/myservice/internal/utils.RespondWithError"
-      statusCodeIndex: 1 # The 2nd argument is the status code.
-      descriptionIndex: 2 # The 3rd argument is the error message string.
-      dataIndex: 3 # The 4th argument is the error data object.
-
-  # Defines functions for reading query parameters.
-  # Optional: The standard library default is built-in, shown here for example.
-  queryParameter:
-    - functionPath: "net/http.URL.Query.Get"
-      nameIndex: 0
-
-  # Defines functions for reading header parameters.
-  # Optional: The standard library default is built-in, shown here for example.
-  headerParameter:
-    - functionPath: "net/http.Header.Get"
-      nameIndex: 0
-
-# ---------------------------------------------------------------------------
-# SECTION 5: Security Inference Patterns (Optional)
-# ---------------------------------------------------------------------------
-# Purpose: Connects a function call found in your middleware to a security
-# scheme you defined in `securitySchemes`.
-# When to use: When you want `respec` to automatically document which endpoints
-# are protected.
-# Optional: Yes. Use this to enable security inference.
-securityPatterns:
-  # This rule tells respec: "When you see a call to the 'Validate' method
-  # on a 'token.Service' anywhere inside a middleware, apply the 'BearerAuth'
-  # security scheme to all routes protected by that middleware."
-  - functionPath: "github.com/me/myservice/internal/services/token.Service.Validate"
-    schemeName: "BearerAuth"
+```bash
+respec init
 ```
+
+> See the source repo for a full example or start with the one generated by `init`.
 
 ---
 
 ## 🤝 Contributing
 
-This project was born out of a personal need and has primarily been tested with a single non-trivial `chi`-based project.
-
-Bug fixes, ideas, and feedback are welcome! 💬
+This tool was developed for real-world needs, and I welcome contributions!
 
 ### How to contribute:
 
-1. Fork the repository
-2. Create a new branch
-   ```bash
-   git checkout -b feature/AmazingFeature
-   ```
-3. Commit your changes
-   ```bash
-   git commit -m 'Add some AmazingFeature'
-   ```
-4. Push to GitHub
-   ```bash
-   git push origin feature/AmazingFeature
-   ```
-5. Open a Pull Request
+```bash
+# 1. Fork the repo
+# 2. Create a feature branch
+git checkout -b feature/AmazingFeature
+
+# 3. Commit and push
+git commit -m "Add feature"
+git push origin feature/AmazingFeature
+
+# 4. Open a pull request
+```
 
 ---
 
 ## 📜 License
 
-This project is licensed under the MIT License — see the [LICENSE](./LICENSE) file for details.
+MIT License — see the [LICENSE](./LICENSE) file for full terms.
