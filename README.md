@@ -110,7 +110,7 @@ respec . -o openapi.yaml
 
 ## 📦 Metadata API Reference (Layer 1)
 
-respec allows you to decorate your handlers for full control over the spec.
+respec allows you to decorate your handlers for full control over the spec. Ideally, this works for any router framework, but it has been primarily tested with chi.
 
 ### ✅ Import the Library
 
