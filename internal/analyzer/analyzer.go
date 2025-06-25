@@ -2,7 +2,6 @@ package analyzer
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
@@ -46,13 +45,10 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 	if apiModel.Components == nil {
 		apiModel.Components = &openapi3.Components{}
 	}
-	if apiModel.Components.Schemas == nil {
-		apiModel.Components.Schemas = make(map[string]*openapi3.SchemaRef)
-	}
-	for _, ref := range state.SchemaGen.schemas {
-		key := strings.TrimPrefix(ref.Ref, "#/components/schemas/")
-		apiModel.Components.Schemas[key] = ref
-	}
+
+	// This correctly uses the public Components map from the SchemaGenerator.
+	// This ensures that only named, reusable schemas are added to the final spec.
+	apiModel.Components.Schemas = state.SchemaGen.Components
 
 	return apiModel, nil
 }
