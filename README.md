@@ -23,6 +23,16 @@ It is built on a philosophy of:
 
 ---
 
+## Why?
+
+Most OpenAPI tooling in Go either relies on heavy annotation, awkward code generation, or intrusive wrappers.
+
+go-respec takes a different approach: it statically analyzes your existing code to generate OpenAPI v3 specs, with zero annotations or generated code. It works with idiomatic Go and gives you full control to override any inferred values.
+
+If you’ve ever found tools like swaggo or oapi-codegen too restrictive, or just wanted a lightweight/easy way to expose your routes as an OpenAPI spec — this is for you.
+
+---
+
 ## 🚨 Disclaimer
 
 This is a new and experimental project built primarily for my own needs after being frustrated with existing tools that rely heavily on "magic comments."
