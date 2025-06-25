@@ -51,7 +51,6 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
 			op.Spec.Summary = parsedComment.Summary
 			op.Spec.Description = parsedComment.Description
-			// Note: Tags from doc comments will be merged in the assembler
 		}
 	}
 	if op.Spec.Summary == "" {
@@ -101,10 +100,6 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		op.Spec.AddResponse(statusCode, response)
 	}
 
-	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
-		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
-	}
-
 	// --- Layer 1: Apply Explicit Overrides ---
 	if metadata, ok := s.OperationMetadata[op.GoHandler]; ok {
 		if metadata.RequestBodyExpr != nil {
@@ -114,12 +109,51 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 				op.Spec.RequestBody = &openapi3.RequestBodyRef{Value: reqBody}
 			}
 		}
-		for code, expr := range metadata.ResponseExprs {
-			if tv, ok := s.getInfoForNode(expr).Types[expr]; ok {
-				schemaRef := s.SchemaGen.GenerateSchema(tv.Type)
-				response := openapi3.NewResponse().WithDescription(http.StatusText(code)).WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
-				op.Spec.AddResponse(code, response)
+		for _, respOverride := range metadata.Responses {
+			var schemaRef *openapi3.SchemaRef
+			var description string = http.StatusText(respOverride.Code)
+			// Check if the content is a string literal for description, or a type for a schema
+			if str, isStr := s.resolveStringValue(respOverride.ContentExpr); isStr {
+				description = str
+			} else if tv, ok := s.getInfoForNode(respOverride.ContentExpr).Types[respOverride.ContentExpr]; ok {
+				schemaRef = s.SchemaGen.GenerateSchema(tv.Type)
 			}
+			response := openapi3.NewResponse().WithDescription(description)
+			if schemaRef != nil {
+				response.WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
+			}
+			op.Spec.AddResponse(respOverride.Code, response)
+		}
+		for _, paramOverride := range metadata.Parameters {
+			op.Spec.AddParameter(&openapi3.Parameter{
+				In:          paramOverride.In,
+				Name:        paramOverride.Name,
+				Description: paramOverride.Description,
+				Required:    paramOverride.Required,
+				Deprecated:  paramOverride.Deprecated,
+				Schema:      openapi3.NewStringSchema().NewRef(),
+			})
+		}
+		for _, headerOverride := range metadata.ResponseHeaders {
+			if resp := op.Spec.Responses.Map()[strconv.Itoa(headerOverride.Code)]; resp != nil && resp.Value != nil {
+				if resp.Value.Headers == nil {
+					resp.Value.Headers = make(map[string]*openapi3.HeaderRef)
+				}
+				resp.Value.Headers[headerOverride.Name] = &openapi3.HeaderRef{
+					Value: &openapi3.Header{
+						Parameter: openapi3.Parameter{Description: headerOverride.Description},
+					},
+				}
+			}
+		}
+		if len(metadata.Servers) > 0 {
+			op.Spec.Servers = &openapi3.Servers{}
+			for _, srv := range metadata.Servers {
+				*op.Spec.Servers = append(*op.Spec.Servers, &openapi3.Server{URL: srv.URL, Description: srv.Description})
+			}
+		}
+		if metadata.ExternalDocs != nil {
+			op.Spec.ExternalDocs = &openapi3.ExternalDocs{URL: metadata.ExternalDocs.URL, Description: metadata.ExternalDocs.Description}
 		}
 		if metadata.OperationID != "" {
 			op.Spec.OperationID = metadata.OperationID
@@ -127,6 +161,10 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		if metadata.Deprecated {
 			op.Spec.Deprecated = true
 		}
+	}
+
+	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
+		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
 	}
 }
 

@@ -166,57 +166,69 @@ r.Route("/admin", func(r chi.Router) {
 
 ### 🔄 Available Methods
 
-| Method               | Description                                      | Example (Handler)                | Example (Meta)                   |
-| -------------------- | ------------------------------------------------ | -------------------------------- | -------------------------------- |
-| .Summary(string)     | Short name of the operation                      | .Summary("Get User by ID")       | .Summary("User Administration")  |
-| .Description(string) | Longer operation description                     | .Description("Retrieves a user") | .Description("Manages users...") |
-| .Tag(...string)      | One or more OpenAPI tags                         | .Tag("Users", "Profiles")        | .Tag("Admin")                    |
-| .Security(string)    | Reference to a security scheme in `.respec.yaml` | .Security("BearerAuth")          | .Security("AdminSecurity")       |
+| Method                                    | Description                                                                                             | Applies To    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------- |
+| `.Summary(string)`                        | Overrides the summary (a short title) for the operation(s).                                             | Handler       |
+| `.Description(string)`                    | Overrides the longer description for the operation(s).                                                  | Handler       |
+| `.Tag(...string)`                         | Sets tags for the operation(s). Replaces any inherited tags.                                            | Handler, Meta |
+| `.Security(...string)`                    | Sets security schemes. Replaces any inherited security.                                                 | Handler, Meta |
+| `.RequestBody(obj)`                       | Overrides the request body with a schema generated from `obj`.                                          | Handler only  |
+| `.AddResponse(code, content)`             | Adds or overrides a response. `content` can be a struct (`User{}`) or a string literal (`"Not Found"`). | Handler only  |
+| `.AddParameter(in, name, desc, req, dep)` | Adds or overrides a parameter (`in` is `"query"`, `"header"`, etc.).                                    | Handler only  |
+| `.ResponseHeader(code, name, desc)`       | Adds a header to a specific response code.                                                              | Handler only  |
+| `.OperationID(string)`                    | Sets a custom `operationId` for the endpoint.                                                           | Handler only  |
+| `.Deprecate(bool)`                        | Marks the operation(s) as deprecated.                                                                   | Handler, Meta |
+| `.ExternalDocs(url, desc)`                | Adds a link to external documentation for the operation.                                                | Handler only  |
+| `.AddServer(url, desc)`                   | Adds an operation-specific server URL.                                                                  | Handler only  |
 
 ---
 
 ### 📎 Examples
 
-Summary:
+This example demonstrates how to use the full suite of override methods to take complete control of an endpoint's specification.
 
 ```go
-r.Get("/{id}",
-  respec.Handler(handler).
-    Summary("Get User by ID").
-    Unwrap(),
-)
-```
+// Define custom structs for request and response schemas.
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
 
-Description:
+type UserResponse struct {
+    ID   string `json:"id"`
+    Name string `json:"name"`
+}
 
-```go
-r.Get("/{id}",
-  respec.Handler(handler).
-    Description("Retrieves the user profile.").
-    Unwrap(),
-)
-```
+type ErrorResponse struct {
+    Code    int    `json:"code"`
+    Message string `json:"message"`
+}
 
-Tags:
+// In your router setup:
+r.Post("/users",
+    respec.Handler(userHandlers.Create).
+        Summary("Create a new system user").
+        Description("Creates a new user account with the provided information. Returns the user object on success.").
+        Tag("Users", "Write Ops").
+        Security("BearerAuth", "ApiKeyAuth").
+        OperationID("users-create").
+        Deprecate(false).
 
-```go
-r.Get("/{id}", respec.Handler(handler).Tag("User Management").Unwrap())
+        // Override request and response bodies
+        RequestBody(CreateUserRequest{}).
+        AddResponse(201, UserResponse{}).
+        AddResponse(409, ErrorResponse{}).
+        AddResponse(400, "Invalid request payload provided.").
 
-// Multiple tags
-r.Get("/{id}/sessions",
-  respec.Handler(handler).
-    Tag("User Management", "Sessions").
-    Unwrap(),
-)
-```
+        // Add custom parameters and response headers
+        AddParameter("query", "source", "The source of the registration.", false, false).
+        ResponseHeader(201, "X-RateLimit-Remaining", "The number of requests remaining for this client.").
 
-Security:
+        // Add external documentation and an operation-specific server
+        ExternalDocs("[https://docs.example.com/users/create](https://docs.example.com/users/create)", "API Usage Guide").
+        AddServer("[https://users.api.example.com](https://users.api.example.com)", "Users API Server").
 
-```go
-r.Get("/me",
-  respec.Handler(handler).
-    Security("BearerAuth").
-    Unwrap(),
+        Unwrap(),
 )
 ```
 

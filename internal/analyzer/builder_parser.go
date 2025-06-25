@@ -37,9 +37,7 @@ func (s *State) FindAndParseRouteMetadata() {
 
 // parseHandlerChain walks a call chain backwards to parse metadata.
 func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.Expr) {
-	metadata := &respec.HandlerMetadata{
-		ResponseExprs: make(map[int]ast.Expr),
-	}
+	metadata := &respec.HandlerMetadata{}
 	currentExpr := expr
 
 	for {
@@ -56,12 +54,16 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 
 		switch methodName {
 		case "Summary":
-			if str, ok := s.resolveStringValue(call.Args[0]); ok {
-				metadata.Summary = str
+			if len(call.Args) > 0 {
+				if str, ok := s.resolveStringValue(call.Args[0]); ok {
+					metadata.Summary = str
+				}
 			}
 		case "Description":
-			if str, ok := s.resolveStringValue(call.Args[0]); ok {
-				metadata.Description = str
+			if len(call.Args) > 0 {
+				if str, ok := s.resolveStringValue(call.Args[0]); ok {
+					metadata.Description = str
+				}
 			}
 		case "Tag":
 			for _, arg := range call.Args {
@@ -70,8 +72,10 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 				}
 			}
 		case "Security":
-			if str, ok := s.resolveStringValue(call.Args[0]); ok {
-				metadata.Security = append(metadata.Security, str)
+			for _, arg := range call.Args {
+				if str, ok := s.resolveStringValue(arg); ok {
+					metadata.Security = append(metadata.Security, str)
+				}
 			}
 		case "RequestBody":
 			if len(call.Args) > 0 {
@@ -80,16 +84,48 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 		case "AddResponse":
 			if len(call.Args) == 2 {
 				if code, ok := s.resolveIntValue(call.Args[0]); ok {
-					metadata.ResponseExprs[code] = call.Args[1]
+					metadata.Responses = append(metadata.Responses, respec.ResponseOverride{Code: code, ContentExpr: call.Args[1]})
 				}
 			}
+		case "AddParameter":
+			if len(call.Args) == 5 {
+				in, _ := s.resolveStringValue(call.Args[0])
+				name, _ := s.resolveStringValue(call.Args[1])
+				desc, _ := s.resolveStringValue(call.Args[2])
+				req, _ := getBoolValue(call.Args[3])
+				dep, _ := getBoolValue(call.Args[4])
+				metadata.Parameters = append(metadata.Parameters, respec.ParameterOverride{In: in, Name: name, Description: desc, Required: req, Deprecated: dep})
+			}
+		case "ResponseHeader":
+			if len(call.Args) == 3 {
+				code, _ := s.resolveIntValue(call.Args[0])
+				name, _ := s.resolveStringValue(call.Args[1])
+				desc, _ := s.resolveStringValue(call.Args[2])
+				metadata.ResponseHeaders = append(metadata.ResponseHeaders, respec.ResponseHeaderOverride{Code: code, Name: name, Description: desc})
+			}
+		case "AddServer":
+			if len(call.Args) == 2 {
+				url, _ := s.resolveStringValue(call.Args[0])
+				desc, _ := s.resolveStringValue(call.Args[1])
+				metadata.Servers = append(metadata.Servers, respec.ServerOverride{URL: url, Description: desc})
+			}
+		case "ExternalDocs":
+			if len(call.Args) == 2 {
+				url, _ := s.resolveStringValue(call.Args[0])
+				desc, _ := s.resolveStringValue(call.Args[1])
+				metadata.ExternalDocs = &respec.ExternalDocsOverride{URL: url, Description: desc}
+			}
 		case "OperationID":
-			if str, ok := s.resolveStringValue(call.Args[0]); ok {
-				metadata.OperationID = str
+			if len(call.Args) > 0 {
+				if str, ok := s.resolveStringValue(call.Args[0]); ok {
+					metadata.OperationID = str
+				}
 			}
 		case "Deprecate":
-			if val, ok := getBoolValue(call.Args[0]); ok {
-				metadata.Deprecated = val
+			if len(call.Args) > 0 {
+				if val, ok := getBoolValue(call.Args[0]); ok {
+					metadata.Deprecated = val
+				}
 			}
 		case "Handler":
 			if len(call.Args) == 1 {

@@ -15,8 +15,7 @@ type APIModel struct {
 	openapi3.T
 	// RouteGraph represents the routing tree of the API.
 	RouteGraph *RouteNode
-
-	// Components holds reusable components like schemas and security schemes.
+	// GroupMetadata holds metadata from .Meta() calls.
 	GroupMetadata GroupMetadataMap
 }
 
@@ -24,7 +23,6 @@ type APIModel struct {
 type RouteNode struct {
 	// GoVar holds a reference to the Go variable for this router/group.
 	GoVar types.Object
-
 	// PathPrefix is the path prefix of the current routing scope.
 	PathPrefix string
 	// Parent is the parent node in the routing tree.
@@ -35,8 +33,10 @@ type RouteNode struct {
 	Operations []*Operation
 	// InferredSecurity holds the names of security schemes inferred from middleware.
 	InferredSecurity []string
-	// Holds tags from respec.Meta() calls for hierarchical application.
+	// Tags holds tags from .Meta() calls for hierarchical application.
 	Tags []string
+	// Deprecated marks whether this entire node and its children are deprecated.
+	Deprecated bool // <-- ADDED
 }
 
 // Operation represents a single API endpoint (e.g., GET /users/{id}).
@@ -45,17 +45,14 @@ type Operation struct {
 	HTTPMethod string
 	// FullPath is the full path of the API endpoint.
 	FullPath string
-
 	// HandlerPackage is the package name of the handler function.
 	HandlerPackage string
 	// HandlerName is the name of the handler function.
 	HandlerName string
 	// GoHandler holds a reference to the Go handler function.
 	GoHandler types.Object
-
-	// BuilderMetadata holds metadata from the fluent builder.
-	HandlerMetadata *respec.HandlerMetadata // <-- CORRECTED
-
+	// HandlerMetadata holds metadata from the fluent builder.
+	HandlerMetadata *respec.HandlerMetadata
 	// Spec is the OpenAPI specification of the API endpoint.
 	Spec *openapi3.Operation
 }
