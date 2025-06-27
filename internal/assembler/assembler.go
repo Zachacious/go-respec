@@ -21,6 +21,13 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 		Servers: make([]*openapi3.Server, 0, len(cfg.Servers)),
 	}
 	spec.Components.Schemas = apiModel.Components.Schemas
+	// Add servers from the configuration
+	for _, server := range cfg.Servers {
+		spec.Servers = append(spec.Servers, &openapi3.Server{
+			URL:         server.URL,
+			Description: server.Description,
+		})
+	}
 
 	fmt.Println("Assembling specification from route graph...")
 	addRoutesToSpec(spec, apiModel.RouteGraph, apiModel.GroupMetadata)
