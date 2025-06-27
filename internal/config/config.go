@@ -8,6 +8,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ServerUrl struct {
+	// URL is the server URL.
+	URL string `yaml:"url"`
+	// Description is the server description.
+	Description string `yaml:"description,omitempty"`
+}
+
 // SecurityPattern represents a security pattern.
 type SecurityPattern struct {
 	// FunctionPath is the path to the function.
@@ -73,13 +80,15 @@ type Config struct {
 	// Info is the information about the API.
 	Info *openapi3.Info `yaml:"info"`
 	// SecuritySchemes is a map of security schemes.
-	SecuritySchemes map[string]interface{} `yaml:"securitySchemes"`
+	SecuritySchemes map[string]any `yaml:"securitySchemes"`
 	// RouterDefinitions is a list of router definitions.
 	RouterDefinitions []RouterDefinition `yaml:"routerDefinitions"`
 	// HandlerPatterns is the handler patterns configuration.
 	HandlerPatterns *HandlerPatternsConfig `yaml:"handlerPatterns"`
 	// SecurityPatterns is a list of security patterns.
 	SecurityPatterns []SecurityPattern `yaml:"securityPatterns"`
+	// Servers is a list of server URLs.
+	Servers []ServerUrl `yaml:"servers,omitempty"`
 }
 
 // Load loads a configuration from a file.
@@ -137,6 +146,7 @@ func Load(projectPath string) (*Config, error) {
 				{FunctionPath: "net/http.Header.Get", NameIndex: 0},
 			},
 		},
+		Servers: []ServerUrl{},
 	}
 
 	configPath := filepath.Join(projectPath, ".respec.yaml")

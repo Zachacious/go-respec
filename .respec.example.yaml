@@ -97,3 +97,16 @@ securityPatterns:
   # security scheme to all routes protected by that middleware."
   - functionPath: "github.com/me/myservice/internal/services/token.Service.Validate"
     schemeName: "BearerAuth"
+
+# ---------------------------------------------------------------------------
+# SECTION 6: Server URLs (Optional)
+# ---------------------------------------------------------------------------
+# Purpose: Defines the base URLs for your API servers.
+# When to use: Use this section to specify the base URLs for your API servers.
+# Optional: Yes. If omitted, `respec` will not include server URLs in the
+# generated OpenAPI spec.
+servers:
+  - url: "https://api.myservice.com/v1" # The base URL for your API.
+    description: "Production server" # Optional description.
+  - url: "https://staging.myservice.com/v1" # Staging server
+    description: "Staging server" # Optional description.

@@ -17,7 +17,8 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 			Schemas:         make(openapi3.Schemas),
 			SecuritySchemes: cfg.GetSecuritySchemes(),
 		},
-		Paths: &openapi3.Paths{},
+		Paths:   &openapi3.Paths{},
+		Servers: make([]*openapi3.Server, 0, len(cfg.Servers)),
 	}
 	spec.Components.Schemas = apiModel.Components.Schemas
 
