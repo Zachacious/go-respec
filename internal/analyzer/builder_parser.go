@@ -115,6 +115,22 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 				desc, _ := s.resolveStringValue(call.Args[1])
 				metadata.ExternalDocs = &respec.ExternalDocsOverride{URL: url, Description: desc}
 			}
+
+		case "Extensions":
+			if len(call.Args) == 1 {
+				if obj, ok := call.Args[0].(*ast.CompositeLit); ok {
+					for _, elem := range obj.Elts {
+						if kv, ok := elem.(*ast.KeyValueExpr); ok {
+							if str, ok := s.resolveStringValue(kv.Key); ok {
+								if val, ok := s.resolveStringValue(kv.Value); ok {
+									metadata.Extensions[str] = val
+								}
+							}
+						}
+					}
+				}
+			}
+
 		case "OperationID":
 			if len(call.Args) > 0 {
 				if str, ok := s.resolveStringValue(call.Args[0]); ok {

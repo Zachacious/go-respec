@@ -52,6 +52,7 @@ type HandlerBuilder[T any] struct {
 	respHeaders  []ResponseHeaderOverride
 	servers      []ServerOverride
 	externalDocs *ExternalDocsOverride
+	extentions   map[string]any
 }
 
 func Handler[T any](handler T) *HandlerBuilder[T] {
@@ -99,6 +100,16 @@ func (hb *HandlerBuilder[T]) ExternalDocs(url, desc string) *HandlerBuilder[T] {
 	return hb
 }
 
+func (hb *HandlerBuilder[T]) Extensions(ext map[string]any) *HandlerBuilder[T] {
+	if hb.extentions == nil {
+		hb.extentions = make(map[string]any)
+	}
+	for k, v := range ext {
+		hb.extentions[k] = v
+	}
+	return hb
+}
+
 // --- Group Builder ---
 
 type GroupBuilder struct {
@@ -134,4 +145,5 @@ type HandlerMetadata struct {
 	ExternalDocs    *ExternalDocsOverride
 	OperationID     string
 	Deprecated      bool
+	Extensions      map[string]any
 }

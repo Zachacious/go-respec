@@ -155,12 +155,21 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		if metadata.ExternalDocs != nil {
 			op.Spec.ExternalDocs = &openapi3.ExternalDocs{URL: metadata.ExternalDocs.URL, Description: metadata.ExternalDocs.Description}
 		}
+		if metadata.Extensions != nil {
+			if op.Spec.Extensions == nil {
+				op.Spec.Extensions = make(map[string]any)
+			}
+			for k, v := range metadata.Extensions {
+				op.Spec.Extensions[k] = v
+			}
+		}
 		if metadata.OperationID != "" {
 			op.Spec.OperationID = metadata.OperationID
 		}
 		if metadata.Deprecated {
 			op.Spec.Deprecated = true
 		}
+
 	}
 
 	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
