@@ -116,34 +116,69 @@ func getFuncPath(obj types.Object) string {
 }
 
 // resolveIntValue attempts to resolve an expression to an integer value.
+// func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
+// 	info := s.getInfoForNode(expr)
+// 	if info == nil {
+// 		return 0, false
+// 	}
+// 	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
+// 		if val, err := strconv.Atoi(lit.Value); err == nil {
+// 			return val, true
+// 		}
+// 	}
+// 	if ident, ok := expr.(*ast.Ident); ok {
+// 		if obj := info.Uses[ident]; obj != nil {
+// 			if c, ok := obj.(*types.Const); ok {
+// 				if val, exact := constant.Int64Val(c.Val()); exact {
+// 					return int(val), true
+// 				}
+// 			}
+// 		}
+// 	}
+// 	if sel, ok := expr.(*ast.SelectorExpr); ok {
+// 		if obj := info.Uses[sel.Sel]; obj != nil {
+// 			if c, ok := obj.(*types.Const); ok {
+// 				if val, exact := constant.Int64Val(c.Val()); exact {
+// 					return int(val), true
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return 0, false
+// }
+
 func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
-	info := s.getInfoForNode(expr)
-	if info == nil {
-		return 0, false
-	}
 	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
 		if val, err := strconv.Atoi(lit.Value); err == nil {
 			return val, true
 		}
 	}
+
+	info := s.getInfoForNode(expr)
+	if info == nil {
+		return 0, false
+	}
+
 	if ident, ok := expr.(*ast.Ident); ok {
 		if obj := info.Uses[ident]; obj != nil {
-			if c, ok := obj.(*types.Const); ok {
+			if c, ok := obj.(*types.Const); ok && c.Val().Kind() == constant.Int {
 				if val, exact := constant.Int64Val(c.Val()); exact {
 					return int(val), true
 				}
 			}
 		}
 	}
+
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if obj := info.Uses[sel.Sel]; obj != nil {
-			if c, ok := obj.(*types.Const); ok {
+			if c, ok := obj.(*types.Const); ok && c.Val().Kind() == constant.Int {
 				if val, exact := constant.Int64Val(c.Val()); exact {
 					return int(val), true
 				}
 			}
 		}
 	}
+
 	return 0, false
 }
 
