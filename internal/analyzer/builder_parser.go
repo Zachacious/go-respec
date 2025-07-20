@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"go/ast"
+	"go/token"
+	"strconv"
 
 	"github.com/Zachacious/go-respec/respec"
 )
@@ -118,14 +120,45 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 
 		case "Extensions":
 			if len(call.Args) == 1 {
-				// add the vendor extensions
-				if ext, ok := call.Args[0].(*ast.StructType); ok {
-					for _, field := range ext.Fields.List {
-						if len(field.Names) == 1 {
-							name := field.Names[0]
-							if val, ok := field.Type.(*ast.Ident); ok {
-								metadata.Extensions[name.Name] = val.Name
+				// Ensure Extensions map is initialized
+				if metadata.Extensions == nil {
+					metadata.Extensions = make(map[string]any)
+				}
+				if ext, ok := call.Args[0].(*ast.CompositeLit); ok {
+					for _, elt := range ext.Elts {
+						kv, ok := elt.(*ast.KeyValueExpr)
+						if !ok {
+							continue
+						}
+
+						// Resolve key: support string literals or idents
+						var key string
+						if kIdent, ok := kv.Key.(*ast.Ident); ok {
+							key = kIdent.Name
+						} else if kBasicLit, ok := kv.Key.(*ast.BasicLit); ok {
+							if kBasicLit.Kind == token.STRING {
+								if k, err := strconv.Unquote(kBasicLit.Value); err == nil {
+									key = k
+								}
 							}
+						}
+
+						if key == "" {
+							continue
+						}
+
+						// Resolve value: try string, int, bool, float
+						if str, ok := s.resolveStringValue(kv.Value); ok {
+							metadata.Extensions[key] = str
+						} else if i, ok := s.resolveIntValue(kv.Value); ok {
+							metadata.Extensions[key] = i
+						} else if b, ok := getBoolValue(kv.Value); ok {
+							metadata.Extensions[key] = b
+						} else if f, ok := s.resolveFloatValue(kv.Value); ok {
+							metadata.Extensions[key] = f
+						} else {
+							// fallback: store raw expression?
+							metadata.Extensions[key] = kv.Value
 						}
 					}
 				}
@@ -160,4 +193,15 @@ func getBoolValue(expr ast.Expr) (bool, bool) {
 		return ident.Name == "true", true
 	}
 	return false, false
+}
+
+// resolve float value from an expression.
+func (s *State) resolveFloatValue(expr ast.Expr) (float64, bool) {
+	if basicLit, ok := expr.(*ast.BasicLit); ok && basicLit.Kind == token.FLOAT {
+		val, err := strconv.ParseFloat(basicLit.Value, 64)
+		if err == nil {
+			return val, true
+		}
+	}
+	return 0, false
 }

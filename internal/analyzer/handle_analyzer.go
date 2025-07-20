@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"net/http"
 	"strconv"
 
@@ -159,9 +160,7 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 			if op.Spec.Extensions == nil {
 				op.Spec.Extensions = make(map[string]any)
 			}
-			for k, v := range metadata.Extensions {
-				op.Spec.Extensions[k] = v
-			}
+			maps.Copy(op.Spec.Extensions, metadata.Extensions)
 		}
 		if metadata.OperationID != "" {
 			op.Spec.OperationID = metadata.OperationID
