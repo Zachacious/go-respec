@@ -190,6 +190,8 @@ r.Route("/admin", func(r chi.Router) {
 | `.Deprecate(bool)`                        | Marks the operation(s) as deprecated.                                                                   | Handler, Meta |
 | `.ExternalDocs(url, desc)`                | Adds a link to external documentation for the operation.                                                | Handler only  |
 | `.AddServer(url, desc)`                   | Adds an operation-specific server URL.                                                                  | Handler only  |
+| `.Extensions(map[string]any)`             | Adds custom OpenAPI extensions to the operation typically starting with "x-".                           | Handler only  |
+| `.Unwrap()`                               | Returns the original handler function after applying metadata. **Required at then end of each chain.**  | Handler only  |
 
 ---
 
@@ -222,6 +224,10 @@ r.Post("/users",
         Tag("Users", "Write Ops").
         Security("BearerAuth", "ApiKeyAuth").
         OperationID("users-create").
+        Extensions(map[string]any{
+            "x-custom-extension": "value",
+            "x-another-extension": true,
+        }).
         Deprecate(false).
 
         // Override request and response bodies
