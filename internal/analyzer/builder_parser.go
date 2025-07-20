@@ -118,13 +118,13 @@ func (s *State) parseHandlerChain(expr ast.Expr) (*respec.HandlerMetadata, ast.E
 
 		case "Extensions":
 			if len(call.Args) == 1 {
-				if obj, ok := call.Args[0].(*ast.CompositeLit); ok {
-					for _, elem := range obj.Elts {
-						if kv, ok := elem.(*ast.KeyValueExpr); ok {
-							if str, ok := s.resolveStringValue(kv.Key); ok {
-								if val, ok := s.resolveStringValue(kv.Value); ok {
-									metadata.Extensions[str] = val
-								}
+				// add the vendor extensions
+				if ext, ok := call.Args[0].(*ast.StructType); ok {
+					for _, field := range ext.Fields.List {
+						if len(field.Names) == 1 {
+							name := field.Names[0]
+							if val, ok := field.Type.(*ast.Ident); ok {
+								metadata.Extensions[name.Name] = val.Name
 							}
 						}
 					}
