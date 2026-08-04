@@ -22,13 +22,22 @@ MODULE := $(shell go list -m)
 # ldflags to inject version info into the binary
 LDFLAGS := -s -w -buildid= -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.date=$(DATE)'
 
-.PHONY: all build clean release version install uninstall debug test lint fmt tidy deps dev-setup help
+.PHONY: all build clean release version install uninstall debug test lint fmt tidy deps dev-setup help FORCE
+
+# FORCE is an always-out-of-date prerequisite, used to defeat make's timestamp
+# check on build outputs. See the build target for why.
+FORCE:
 
 # Default target builds for the current OS/architecture
 build: $(DIST)/$(BINARY)
 
-# Local build target
-$(DIST)/$(BINARY):
+# Local build target.
+#
+# FORCE makes this run every time. Without it, make sees an existing binary in
+# dist/ and considers the target satisfied, so editing a .go file produced no
+# rebuild - and `make all` happily shipped binaries months out of date. Go's
+# own build cache makes the repeated invocation cheap.
+$(DIST)/$(BINARY): FORCE
 	@mkdir -p $(DIST)
 	go build -trimpath -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY) ./cmd/respec
 
@@ -56,7 +65,7 @@ uninstall:
 # Cross-platform builds for all defined platforms
 all: $(PLATFORMS:%=$(DIST)/$(BINARY)-%)
 
-$(DIST)/$(BINARY)-%:
+$(DIST)/$(BINARY)-%: FORCE
 	@platform="$*"; \
 	os=$${platform%-*}; arch=$${platform#*-}; \
 	outfile="$(DIST)/$(BINARY)-$$os-$$arch"; \
