@@ -79,9 +79,11 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-      - uses: golangci/golangci-lint-action@v6
+      # Pinned: golangci-lint v2 needs action v7+, and "latest" turns a new
+      # linter release into a surprise CI failure on an unrelated PR.
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
 
   api-surface:
