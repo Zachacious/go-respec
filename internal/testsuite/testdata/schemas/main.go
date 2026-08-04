@@ -32,9 +32,9 @@ type Node struct {
 	Active   bool             `json:"active"`
 	// No omitempty, so a nil pointer really is encoded as null: this field is
 	// always present and genuinely nullable.
-	Owner    *Base            `json:"owner"`
-	Nickname *string          `json:"nickname"`
-	Secret   string           `json:"-"`
+	Owner    *Base   `json:"owner"`
+	Nickname *string `json:"nickname"`
+	Secret   string  `json:"-"`
 	internal string
 }
 
