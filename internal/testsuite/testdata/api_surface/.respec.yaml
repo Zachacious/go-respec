@@ -1,0 +1,9 @@
+info:
+  title: "API Surface Fixture"
+  version: "1.0.0"
+
+securitySchemes:
+  BearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT

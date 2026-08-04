@@ -185,6 +185,12 @@ func (s *State) resolveIntValue(expr ast.Expr) (int, bool) {
 // resolveStringValue attempts to resolve an expression to a string value.
 func (s *State) resolveStringValue(expr ast.Expr) (string, bool) {
 	switch e := expr.(type) {
+	case *ast.ParenExpr:
+		// A parenthesised literal is still a literal. Real code contains
+		// `Post(("/x"), h)`, and failing to see through the parentheses dropped
+		// the route as though its path were computed at run time.
+		return s.resolveStringValue(e.X)
+
 	case *ast.BasicLit:
 		if e.Kind == token.STRING {
 			val, err := strconv.Unquote(e.Value)

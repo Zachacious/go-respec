@@ -1,7 +1,6 @@
 package assembler
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Zachacious/go-respec/internal/config"
@@ -29,43 +28,65 @@ func BuildSpec(apiModel *model.APIModel, cfg *config.Config) (*openapi3.T, error
 		})
 	}
 
-	fmt.Println("Assembling specification from route graph...")
 	addRoutesToSpec(spec, apiModel.RouteGraph, apiModel.GroupMetadata)
-
-	fmt.Println("✅ Specification assembled successfully.")
 	return spec, nil
 }
 
 func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata model.GroupMetadataMap) {
 	// Apply hierarchical metadata from respec.Meta calls to the current node.
-	if meta, ok := groupMetadata[node.GoVar]; ok {
-		if tags := meta.GetTags(); len(tags) > 0 {
+	if group, ok := groupMetadata[node.GoVar]; ok {
+		if tags := group.Tags; len(tags) > 0 {
 			node.Tags = append(node.Tags, tags...)
 		}
-		if security := meta.GetSecurity(); len(security) > 0 {
+		if security := group.Security; len(security) > 0 {
 			node.InferredSecurity = append(node.InferredSecurity, security...)
 		}
-		if meta.GetDeprecated() {
+		if group.Deprecated {
 			node.Deprecated = true
+		}
+		if group.NoSecurity {
+			node.NoSecurity = true
 		}
 	}
 
 	for _, op := range node.Operations {
+		// .Hide() keeps internal endpoints out of published documentation.
+		if op.HandlerMetadata != nil && op.HandlerMetadata.Hidden {
+			continue
+		}
 		operationSpec := op.Spec
 
 		// --- Layer 3 & 2: Inferred/Hierarchical Tags & Security ---
 		var hierarchicalTags []string
 		var hierarchicalSecurity []string
 		var isDeprecated bool
+		groupIsPublic := false
 		for n := node; n != nil; n = n.Parent {
 			hierarchicalTags = append(hierarchicalTags, n.Tags...)
-			hierarchicalSecurity = append(hierarchicalSecurity, n.InferredSecurity...)
 			if n.Deprecated {
 				isDeprecated = true
 			}
+			// A scope marked Public shields itself and everything under it from
+			// security declared further up. Only security stops here: tags and
+			// deprecation still come down from the enclosing groups, because
+			// Public says nothing about how the endpoint is categorised.
+			if n.NoSecurity {
+				groupIsPublic = true
+			}
+			if !groupIsPublic {
+				hierarchicalSecurity = append(hierarchicalSecurity, n.InferredSecurity...)
+			}
 		}
-		// Apply unique hierarchical tags by default.
-		operationSpec.Tags = uniqueStrings(hierarchicalTags)
+
+		// Tags follow the same three layers as everything else: an explicit
+		// .Tag() beats an @tags doc line, which beats tags inherited from the
+		// enclosing groups.
+		tags := uniqueStrings(hierarchicalTags)
+		if len(op.DocTags) > 0 {
+			tags = uniqueStrings(op.DocTags)
+		}
+		operationSpec.Tags = tags
+
 		if isDeprecated && !operationSpec.Deprecated {
 			operationSpec.Deprecated = true
 		}
@@ -96,6 +117,19 @@ func addRoutesToSpec(spec *openapi3.T, node *model.RouteNode, groupMetadata mode
 			if builder.Deprecated {
 				operationSpec.Deprecated = true
 			}
+			// .Public() opts an endpoint out of the group's security, which is
+			// how login and health routes live inside an authenticated group.
+			if builder.NoSecurity {
+				hasExplicitSecurityOverride = true
+				operationSpec.Security = &openapi3.SecurityRequirements{}
+			}
+		}
+
+		// A group marked Public states the absence of security explicitly, so
+		// that a reader can tell it apart from a group nobody has secured yet.
+		if !hasExplicitSecurityOverride && groupIsPublic && len(hierarchicalSecurity) == 0 {
+			hasExplicitSecurityOverride = true
+			operationSpec.Security = &openapi3.SecurityRequirements{}
 		}
 
 		// Apply unique hierarchical security ONLY if there wasn't an explicit override.

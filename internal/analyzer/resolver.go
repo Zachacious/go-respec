@@ -13,17 +13,20 @@ import (
 // It iterates over the router definitions in the config, finds the corresponding
 // named types in the project's dependencies, and stores them in the ResolvedRouterTypes map.
 func (s *State) resolveConfigTypes(cfg *config.Config) error {
-	fmt.Println("Phase 1: Resolving configured types...")
+	var resolved []string
+
 	for i := range cfg.RouterDefinitions {
 		def := &cfg.RouterDefinitions[i]
 		namedType := s.findNamedType(def.Type)
 
+		// A router type that the project does not import is the normal case:
+		// respec ships definitions for several frameworks and a project uses
+		// one. Only the complete absence of a match is worth reporting.
 		if namedType == nil {
-			fmt.Printf("  [Warning] Could not find type '%s' defined in config in the project's dependencies.\n", def.Type)
 			continue
 		}
 
-		fmt.Printf("  [Info] Resolved type '%s'\n", def.Type)
+		resolved = append(resolved, def.Type)
 		s.ResolvedRouterTypes[def.Type] = &ResolvedType{
 			Object:     namedType,
 			Definition: def,
@@ -31,10 +34,23 @@ func (s *State) resolveConfigTypes(cfg *config.Config) error {
 	}
 
 	if len(s.ResolvedRouterTypes) == 0 {
-		return fmt.Errorf("could not resolve any router types from config. Please check config and ensure dependencies are installed")
+		return fmt.Errorf(
+			"no supported router type found in this project.\n"+
+				"respec looked for: %s\n"+
+				"If you use a different router, describe it under routerDefinitions in .respec.yaml",
+			strings.Join(configuredTypeNames(cfg), ", "))
 	}
 
+	s.ResolvedRouterNames = resolved
 	return nil
+}
+
+func configuredTypeNames(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.RouterDefinitions))
+	for _, def := range cfg.RouterDefinitions {
+		names = append(names, def.Type)
+	}
+	return names
 }
 
 // findNamedType searches for a named type in the project's dependencies.

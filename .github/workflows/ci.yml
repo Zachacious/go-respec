@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # The golden fixtures under internal/testsuite/testdata are separate
+      # modules, so their dependencies are not covered by the root module cache.
+      - name: Download fixture dependencies
+        run: |
+          for mod in internal/testsuite/testdata/*/go.mod; do
+            (cd "$(dirname "$mod")" && go mod download)
+          done
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      # A spec respec itself rejects is a bug, and this has regressed before.
+      - name: Generated specs must validate
+        run: |
+          go build -o /tmp/respec ./cmd/respec
+          fail=0
+          for spec in internal/testsuite/testdata/*/want.yaml; do
+            if ! /tmp/respec validate "$spec" >/dev/null 2>&1; then
+              echo "::error file=$spec::respec validate rejected its own output"
+              /tmp/respec validate "$spec" || true
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # Goldens are committed, so a behaviour change that was not reviewed shows
+      # up here as a dirty tree.
+      - name: Goldens are up to date
+        run: |
+          go test ./internal/testsuite -update
+          if ! git diff --exit-code -- internal/testsuite/testdata; then
+            echo "::error::Golden files are stale. Run 'go test ./internal/testsuite -update' and commit the diff."
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  api-surface:
+    name: Public API has no dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      # The respec package is compiled into every user's service. It must stay
+      # dependency-free: it previously pulled in go/ast, go/scanner and go/token
+      # because analyzer types were declared there.
+      - name: respec package must import nothing
+        run: |
+          deps=$(go list -deps ./respec | grep -v '^github.com/Zachacious/go-respec/respec$' || true)
+          if [ -n "$deps" ]; then
+            echo "::error::The public respec package gained dependencies:"
+            echo "$deps"
+            exit 1
+          fi
+          echo "OK: respec has no dependencies."

@@ -1,0 +1,66 @@
+components:
+    schemas:
+        CreateUserRequest:
+            properties:
+                name:
+                    type: string
+            required:
+                - name
+            type: object
+        User:
+            properties:
+                id:
+                    type: string
+                name:
+                    type: string
+            required:
+                - id
+                - name
+            type: object
+info:
+    title: API Documentation
+    version: 1.0.0
+openapi: 3.1.0
+paths:
+    /users/{id}:
+        get:
+            parameters:
+                - in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                    description: OK
+            summary: Get a user
+    /v1/users:
+        get:
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/User'
+                                type: array
+                    description: OK
+            summary: List users
+        post:
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateUserRequest'
+            responses:
+                "201":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                    description: Created
+            summary: Create a user

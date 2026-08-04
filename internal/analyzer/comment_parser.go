@@ -13,6 +13,41 @@ type ParsedComment struct {
 	Description string
 	// Tags are a list of tags extracted from the comment.
 	Tags []string
+	// SummaryExplicit reports whether Summary came from an @summary line rather
+	// than from the first line of prose. An explicit summary is used verbatim;
+	// a derived one is reworded for documentation.
+	SummaryExplicit bool
+}
+
+// HumanizeSummary turns a Go doc comment's opening line into something that
+// reads as an API summary.
+//
+// Go convention is for a comment to begin with the identifier it documents, so
+// handlers yield "ListBooks returns the catalogue." Rendered next to a path in
+// an API browser that is noise, and every operation ends up prefixed with a
+// name the reader can already see. Dropping the leading identifier gives
+// "Returns the catalogue."
+func HumanizeSummary(summary, funcName string) string {
+	if summary == "" || funcName == "" {
+		return summary
+	}
+
+	rest, ok := strings.CutPrefix(summary, funcName+" ")
+	if !ok {
+		return summary
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return summary
+	}
+
+	// Only capitalise when the next word is ordinary prose. A word that is
+	// already capitalised, or that names an identifier, is left alone.
+	runes := []rune(rest)
+	if runes[0] >= 'a' && runes[0] <= 'z' {
+		runes[0] = runes[0] - 'a' + 'A'
+	}
+	return string(runes)
 }
 
 // parseDocComment inspects a comment group and extracts metadata.
@@ -25,6 +60,7 @@ func parseDocComment(doc *ast.CommentGroup) *ParsedComment {
 	var summary, description string
 	var tags []string
 	var descriptionLines []string
+	var summaryExplicit bool
 
 	for _, comment := range doc.List {
 		// Remove leading "//" and trim whitespace from the comment line.
@@ -44,6 +80,7 @@ func parseDocComment(doc *ast.CommentGroup) *ParsedComment {
 			case "@summary":
 				// Set the summary from the @summary tag.
 				summary = value
+				summaryExplicit = true
 			case "@tags":
 				// Split the @tags value into individual tags and trim whitespace.
 				tags = strings.Split(value, ",")
@@ -57,17 +94,28 @@ func parseDocComment(doc *ast.CommentGroup) *ParsedComment {
 		}
 	}
 
-	// Join the description lines into a single string.
-	description = strings.Join(descriptionLines, "\n")
-
-	// If no explicit @summary is found, use the first line of the description.
+	// If no explicit @summary is found, the first line acts as the summary and
+	// the remainder becomes the description. Keeping the first line in both
+	// fields made every operation repeat itself.
 	if summary == "" && len(descriptionLines) > 0 {
 		summary = descriptionLines[0]
+		descriptionLines = descriptionLines[1:]
 	}
 
+	// Drop blank lines left at either end after the summary was taken out.
+	for len(descriptionLines) > 0 && strings.TrimSpace(descriptionLines[0]) == "" {
+		descriptionLines = descriptionLines[1:]
+	}
+	for len(descriptionLines) > 0 && strings.TrimSpace(descriptionLines[len(descriptionLines)-1]) == "" {
+		descriptionLines = descriptionLines[:len(descriptionLines)-1]
+	}
+
+	description = strings.Join(descriptionLines, "\n")
+
 	return &ParsedComment{
-		Summary:     summary,
-		Description: description,
-		Tags:        tags,
+		Summary:         summary,
+		Description:     description,
+		Tags:            tags,
+		SummaryExplicit: summaryExplicit,
 	}
 }

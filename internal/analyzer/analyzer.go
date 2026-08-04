@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"fmt"
+	"go/token"
+	"strings"
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
@@ -34,13 +36,17 @@ func Analyze(projectPath string, cfg *config.Config) (*model.APIModel, error) {
 	state.FindAndParseRouteMetadata() // Parse .Handler() calls
 	state.FindGroupMetadata()         // Parse .Meta() calls
 	state.performDataFlowAnalysis()
+	state.reportUnlinkedSites()
 	state.analyzeHandlers()
 
-	fmt.Println("✅ Analysis complete. All phases executed successfully.")
+	// Which router respec matched is the first thing worth knowing when routes
+	// come out missing, so record it for --verbose.
+	state.infof(token.NoPos, "tracked routers: %s", strings.Join(state.ResolvedRouterNames, ", "))
 
 	apiModel := &model.APIModel{}
 	apiModel.RouteGraph = state.RouteGraph
 	apiModel.GroupMetadata = state.GroupMetadata
+	apiModel.Diagnostics = toModelDiagnostics(state.Render())
 
 	if apiModel.Components == nil {
 		apiModel.Components = &openapi3.Components{}

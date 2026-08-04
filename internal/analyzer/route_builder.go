@@ -3,86 +3,162 @@ package analyzer
 import (
 	"go/ast"
 	"go/types"
-	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/Zachacious/go-respec/internal/config"
+	"github.com/Zachacious/go-respec/internal/meta"
 	"github.com/Zachacious/go-respec/internal/model"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, handlerDecl *ast.FuncDecl) {
-	selExpr, ok := call.Fun.(*ast.SelectorExpr)
+// buildRouteFromCall turns one route registration call into an Operation.
+//
+// It never returns without either recording an operation or emitting a
+// diagnostic. Dropping a route silently was the single most confusing failure
+// mode respec had: the spec simply came out short, with nothing to explain it.
+func (s *State) buildRouteFromCall(val *TrackedValue, call *ast.CallExpr, pattern config.EndpointPattern, methodName string) {
+	path, httpMethods, ok := s.routePathAndMethods(call, pattern, methodName)
 	if !ok {
+		s.reportf(call.Pos(), "route registered by %s: the path is not a literal string, so this route was skipped", methodName)
 		return
 	}
-	httpMethod := strings.ToUpper(selExpr.Sel.Name)
-	if len(call.Args) < 2 {
+
+	if pattern.HandlerArg >= len(call.Args) {
+		s.reportf(call.Pos(), "route %q: expected a handler in argument %d but the call has %d arguments", path, pattern.HandlerArg, len(call.Args))
 		return
 	}
-	pathArg := call.Args[0]
-	path, ok := s.resolveStringValue(pathArg)
+
+	handlerArg := call.Args[pattern.HandlerArg]
+	resolved := s.resolveHandler(handlerArg)
+
+	if resolved.Obj == nil && resolved.Body == nil {
+		// The route is real even though the handler is opaque, so it still
+		// belongs in the spec - just without inferred detail.
+		s.reportf(call.Pos(),
+			"route %q: could not resolve %s to a handler, so its request and response types were not inferred",
+			path, s.SprintNode(handlerArg))
+	}
+
+	// resolved.Name may legitimately be empty for a handler respec could not
+	// name. It is left empty so the operation simply has no summary, rather
+	// than a placeholder that reads like a real one.
+	name := resolved.Name
+
+	// A path is written in the router's own syntax; OpenAPI only understands
+	// the brace form, so normalise before anything reads the parameters.
+	normalizedPath := val.RouterDef.NormalizePath(path)
+
+	for _, httpMethod := range httpMethods {
+		op := &model.Operation{
+			HTTPMethod:      httpMethod,
+			RoutePath:       normalizedPath,
+			GoHandler:       resolved.Obj,
+			HandlerName:     name,
+			HandlerBody:     resolved.Body,
+			Node:            val.Node,
+			Spec:            newOperation(),
+			HandlerMetadata: metadataOf(resolved.Site),
+		}
+		if resolved.Obj != nil && resolved.Obj.Pkg() != nil {
+			op.HandlerPackage = resolved.Obj.Pkg().Path()
+		}
+		val.Node.Operations = append(val.Node.Operations, op)
+	}
+}
+
+// newOperation builds an operation whose Responses map starts out empty.
+//
+// openapi3.NewOperation leaves Responses nil, and the first AddResponse call
+// then lazily builds it with NewResponses(), which seeds a `default` entry with
+// an empty description. That stray entry ended up on every operation respec
+// ever emitted, so the map is created explicitly here instead.
+func newOperation() *openapi3.Operation {
+	op := openapi3.NewOperation()
+	op.Responses = openapi3.NewResponsesWithCapacity(2)
+	return op
+}
+
+func metadataOf(site *SpecSite) *meta.HandlerMetadata {
+	if site == nil {
+		return nil
+	}
+	return site.Metadata
+}
+
+// routePathAndMethods extracts the path and the HTTP methods a registration
+// call covers, honouring the router's declared argument layout.
+func (s *State) routePathAndMethods(call *ast.CallExpr, pattern config.EndpointPattern, methodName string) (string, []string, bool) {
+	if pattern.PathArg >= len(call.Args) {
+		return "", nil, false
+	}
+	rawPath, ok := s.resolveStringValue(call.Args[pattern.PathArg])
 	if !ok {
-		return
+		return "", nil, false
 	}
 
-	fullPath := s.assembleFullPath(val, path)
-	if len(fullPath) > 1 && strings.HasSuffix(fullPath, "/") {
-		fullPath = fullPath[:len(fullPath)-1]
-	}
-
-	handlerArg := call.Args[1]
-	var handlerObj types.Object
-	var originalHandlerDecl *ast.FuncDecl = handlerDecl
-	finalHandlerExpr := handlerArg
-
-	if callExpr, ok := handlerArg.(*ast.CallExpr); ok {
-		if sel, ok := callExpr.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unwrap" {
-			if _, realHandler := s.parseHandlerChain(sel.X); realHandler != nil {
-				finalHandlerExpr = realHandler
+	switch {
+	case pattern.MethodInPath:
+		// net/http ServeMux: "GET /users/{id}", or just "/users/{id}".
+		verb, path := splitMethodPattern(rawPath)
+		if verb == "" {
+			// A verb-less pattern matches every method. Which of them to
+			// document is a judgement the router definition owns, not the
+			// analyzer, so it comes from config.
+			methods := pattern.DefaultMethods
+			if len(methods) == 0 {
+				methods = []string{"GET"}
 			}
+			s.infof(call.Pos(),
+				"pattern %q names no HTTP method so it matches all of them; documented as %s. Write %q to be explicit, .Hide() it, or set defaultMethods in .respec.yaml.",
+				rawPath, strings.Join(methods, ", "), "GET "+rawPath)
+			return path, methods, true
 		}
-	}
+		return path, []string{verb}, true
 
-	handlerObj = s.getObjectForExpr(finalHandlerExpr)
-
-	if handlerObj == nil {
-		return
-	}
-
-	if originalHandlerDecl == nil || s.getObjectForExpr(handlerArg) != handlerObj {
-		originalHandlerDecl = s.Universe.Functions[handlerObj]
-	}
-
-	op := &model.Operation{
-		HTTPMethod:  httpMethod,
-		FullPath:    fullPath,
-		GoHandler:   handlerObj,
-		HandlerName: handlerObj.Name(),
-		Spec:        openapi3.NewOperation(),
-	}
-	if handlerObj.Pkg() != nil {
-		op.HandlerPackage = handlerObj.Pkg().Path()
-	}
-
-	if metadata, ok := s.OperationMetadata[handlerObj]; ok {
-		op.HandlerMetadata = metadata
-	}
-
-	routeNode := val.Node
-	routeNode.Operations = append(routeNode.Operations, op)
-
-	re := regexp.MustCompile(`\{(\w+)\}`)
-	matches := re.FindAllStringSubmatch(fullPath, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			paramName := match[1]
-			param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
-			if originalHandlerDecl != nil && originalHandlerDecl.Body != nil {
-				s.inferPathParameterType(originalHandlerDecl.Body, param)
-			}
-			op.Spec.AddParameter(param)
+	case pattern.MethodArg != nil:
+		if *pattern.MethodArg >= len(call.Args) {
+			return "", nil, false
 		}
+		verb, ok := s.resolveStringValue(call.Args[*pattern.MethodArg])
+		if !ok {
+			return "", nil, false
+		}
+		return rawPath, []string{strings.ToUpper(verb)}, true
+
+	default:
+		return rawPath, []string{strings.ToUpper(methodName)}, true
+	}
+}
+
+// splitMethodPattern separates the optional leading verb from a Go 1.22+
+// ServeMux pattern. A host component, if present, is preserved in the path.
+func splitMethodPattern(pattern string) (string, string) {
+	parts := strings.Fields(pattern)
+	if len(parts) == 2 && isHTTPMethod(parts[0]) {
+		return strings.ToUpper(parts[0]), parts[1]
+	}
+	return "", pattern
+}
+
+func isHTTPMethod(s string) bool {
+	switch strings.ToUpper(s) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT":
+		return true
+	}
+	return false
+}
+
+// addPathParameters declares a parameter for every placeholder in the final
+// path. It runs after paths are assembled, because a mounted sub-router only
+// learns its full path once its mount point is known.
+func (s *State) addPathParameters(op *model.Operation) {
+	for _, paramName := range config.PathParamNames(op.FullPath) {
+		param := openapi3.NewPathParameter(paramName).WithSchema(openapi3.NewStringSchema())
+		if op.HandlerBody != nil {
+			s.inferPathParameterType(op.HandlerBody, param)
+		}
+		op.Spec.AddParameter(param)
 	}
 }
 
@@ -175,30 +251,4 @@ func (s *State) inferPathParameterType(body *ast.BlockStmt, param *openapi3.Para
 		}
 		return true
 	})
-}
-
-// assembleFullPath walks up the chain of tracked values to construct the
-// complete path for an endpoint, prepending all parent prefixes.
-func (s *State) assembleFullPath(val *TrackedValue, endpointPath string) string {
-	var prefixes []string
-	for current := val; current != nil; current = current.Parent {
-		if current.PathPrefix != "" {
-			prefixes = append(prefixes, current.PathPrefix)
-		}
-	}
-
-	var finalPath strings.Builder
-	for i := len(prefixes) - 1; i >= 0; i-- {
-		finalPath.WriteString(strings.TrimSuffix(prefixes[i], "/"))
-	}
-
-	if !strings.HasPrefix(endpointPath, "/") {
-		finalPath.WriteString("/")
-	}
-	finalPath.WriteString(endpointPath)
-
-	if finalPath.Len() == 0 {
-		return "/"
-	}
-	return finalPath.String()
 }

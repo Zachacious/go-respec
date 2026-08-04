@@ -1,0 +1,10 @@
+# Each fixture is its own Go module, so running `go build ./...` inside one
+# leaves a compiled binary named after the directory. Ignore those and keep the
+# sources, the module files, and the golden specs.
+*/*
+!*/*.go
+!*/*.yaml
+!*/*.yml
+!*/go.mod
+!*/go.sum
+!*/*/

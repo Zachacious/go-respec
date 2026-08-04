@@ -1,0 +1,135 @@
+components:
+    schemas:
+        APIError:
+            properties:
+                code:
+                    type: integer
+                message:
+                    type: string
+            required:
+                - message
+            type: object
+        Credentials:
+            properties:
+                email:
+                    type: string
+                password:
+                    type: string
+            required:
+                - email
+                - password
+            type: object
+        Session:
+            properties:
+                expires_at:
+                    format: date-time
+                    type: string
+                issued_at:
+                    format: date-time
+                    type: string
+                raw:
+                    format: byte
+                    type: string
+                scopes:
+                    items:
+                        type: string
+                    type: array
+                token:
+                    type: string
+            required:
+                - issued_at
+                - scopes
+                - token
+            type: object
+    securitySchemes:
+        BearerAuth:
+            bearerFormat: JWT
+            scheme: bearer
+            type: http
+info:
+    title: API Surface Fixture
+    version: 1.0.0
+openapi: 3.1.0
+paths:
+    /auth/login:
+        post:
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Credentials'
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Session'
+                    description: Session issued
+                    headers:
+                        X-Rate-Limit:
+                            description: Requests remaining
+                            schema:
+                                type: integer
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Bad credentials
+            security: []
+            summary: Log in
+            tags:
+                - Auth
+    /auth/sessions:
+        get:
+            description: Results are ordered by creation time.
+            parameters:
+                - description: Maximum results
+                  in: query
+                  name: limit
+                  schema:
+                    example: 25
+                    type: integer
+                - description: Only active sessions
+                  in: query
+                  name: active
+                  schema:
+                    type: boolean
+                - description: Correlation id
+                  in: header
+                  name: X-Request-Id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/Session'
+                                type: array
+                    description: OK
+            security:
+                - BearerAuth: []
+            summary: List sessions
+            tags:
+                - Sessions
+    /auth/status/ping:
+        get:
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Credentials'
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Session'
+                    description: OK
+            security: []
+            summary: Ping
+            tags:
+                - Auth

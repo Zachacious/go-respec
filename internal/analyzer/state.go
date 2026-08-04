@@ -8,7 +8,6 @@ import (
 
 	"github.com/Zachacious/go-respec/internal/config"
 	"github.com/Zachacious/go-respec/internal/model"
-	"github.com/Zachacious/go-respec/respec"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -27,13 +26,11 @@ type TrackedValue struct {
 	Node *model.RouteNode
 }
 
-// WorklistItem represents a single task for our data flow analysis.
-// It contains a node to analyze and the value associated with it.
-type WorklistItem struct {
-	// The AST node representing the usage of a tracked value (e.g., an `*ast.Ident` for a variable).
-	Node ast.Node
-	// The value being tracked at this node.
-	Value *TrackedValue
+// processKey identifies one (call site, router) pair so that each is analyzed
+// exactly once.
+type processKey struct {
+	node ast.Node
+	val  *TrackedValue
 }
 
 // Universe contains maps of all relevant top-level declarations in the project.
@@ -70,20 +67,28 @@ type State struct {
 	// This is populated by the resolver (Phase 1).
 	// Example key: "github.com/go-chi/chi/v5.Mux"
 	ResolvedRouterTypes map[string]*ResolvedType
+	// ResolvedRouterNames lists the router types actually found in the project,
+	// for reporting.
+	ResolvedRouterNames []string
 
 	// The discovered universe of all relevant declarations in the project.
 	// This is populated by the universe discoverer (Phase 2).
 	Universe *Universe
 
 	// --- Data Flow Analysis State ---
-	// The queue of analysis tasks.
-	Worklist []WorklistItem
-	// A map to link expressions (like call results) to the tracked value they produce.
-	ExprResults map[ast.Expr]*TrackedValue
 	// A map to link variable/parameter objects to the tracked value they hold.
 	VarValues map[types.Object]*TrackedValue
-	// A map to prevent processing the same node for the same value twice, avoiding cycles.
-	processed map[ast.Node]bool
+	// A map to prevent processing the same call for the same router twice.
+	// Routers reach the same call site by more than one path once helper
+	// functions are followed, and recursive helpers would not otherwise terminate.
+	processed map[processKey]bool
+	// The set of objects already bound to a router, guarding against cycles.
+	boundObjects map[types.Object]bool
+
+	// Diagnostics collected during analysis. Every place the analyzer gives up
+	// on a route records one; silence used to be the only signal that something
+	// had been dropped.
+	Diagnostics []Diagnostic
 
 	// The root of the final constructed API route graph.
 	RouteGraph *model.RouteNode
@@ -96,9 +101,12 @@ type State struct {
 
 	GroupMetadata model.GroupMetadataMap
 
-	// OperationMetadata stores metadata parsed from `respec.Route` builders,
-	// keyed by the handler's unique types.Object.
-	OperationMetadata map[types.Object]*respec.HandlerMetadata
+	// SpecSites holds every respec.Handler builder chain found in the source.
+	SpecSites []*SpecSite
+	// Indexes onto SpecSites, one per way a route can name a handler.
+	siteByUnwrap map[*ast.CallExpr]*SpecSite
+	siteByVar    map[types.Object]*SpecSite
+	siteByFunc   map[types.Object]*SpecSite
 }
 
 // NewState creates a new State instance.
@@ -127,15 +135,16 @@ func NewState(pkgs []*packages.Package, cfg *config.Config) (*State, error) {
 			Constants: make(map[types.Object]*ast.ValueSpec),
 		},
 		// Initialize flow analysis fields
-		Worklist:          make([]WorklistItem, 0),
-		ExprResults:       make(map[ast.Expr]*TrackedValue),
-		VarValues:         make(map[types.Object]*TrackedValue),
-		processed:         make(map[ast.Node]bool),
-		RouteGraph:        &model.RouteNode{PathPrefix: "/"},
-		SchemaGen:         NewSchemaGenerator(),
-		Config:            cfg,
-		GroupMetadata:     make(model.GroupMetadataMap),
-		OperationMetadata: make(map[types.Object]*respec.HandlerMetadata),
+		VarValues:     make(map[types.Object]*TrackedValue),
+		processed:     make(map[processKey]bool),
+		boundObjects:  make(map[types.Object]bool),
+		RouteGraph:    &model.RouteNode{PathPrefix: "/"},
+		SchemaGen:     NewSchemaGenerator(),
+		Config:        cfg,
+		GroupMetadata: make(model.GroupMetadataMap),
+		siteByUnwrap:  make(map[*ast.CallExpr]*SpecSite),
+		siteByVar:     make(map[types.Object]*SpecSite),
+		siteByFunc:    make(map[types.Object]*SpecSite),
 	}
 
 	// Immediately run the resolver to populate our type map.

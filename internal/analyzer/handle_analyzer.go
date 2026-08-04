@@ -1,7 +1,6 @@
 package analyzer
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -20,13 +19,13 @@ type responseInfo struct {
 }
 
 func (s *State) analyzeHandlers() {
-	fmt.Println("Phase 5: Analyzing handlers and generating schemas...")
 	s.traverseAndAnalyze(s.RouteGraph)
 }
 
 // traverseAndAnalyze traverses the route graph and analyzes each handler.
 func (s *State) traverseAndAnalyze(node *model.RouteNode) {
 	for _, op := range node.Operations {
+		s.addPathParameters(op)
 		s.analyzeHandlerBody(op)
 	}
 	for _, child := range node.Children {
@@ -40,18 +39,28 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		op.Spec = openapi3.NewOperation()
 	}
 
-	funcDecl, ok := s.Universe.Functions[op.GoHandler]
-	if !ok {
+	// The body may come from a declared function or from a function literal
+	// handed to respec.Handler, so it is carried on the operation rather than
+	// looked up from the handler object.
+	body := op.HandlerBody
+	if body == nil {
 		op.Spec.Summary = op.HandlerName
 		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
 		return
 	}
 
 	// --- Layer 2: Doc Comment Inference ---
-	if funcDecl.Doc != nil {
+	if funcDecl, ok := s.Universe.Functions[op.GoHandler]; ok && funcDecl.Doc != nil {
 		if parsedComment := parseDocComment(funcDecl.Doc); parsedComment != nil {
-			op.Spec.Summary = parsedComment.Summary
+			summary := parsedComment.Summary
+			if !parsedComment.SummaryExplicit {
+				summary = HumanizeSummary(summary, op.HandlerName)
+			}
+			op.Spec.Summary = summary
 			op.Spec.Description = parsedComment.Description
+			// Doc tags are carried on the operation so the assembler can rank
+			// them against group tags and an explicit .Tag() override.
+			op.DocTags = parsedComment.Tags
 		}
 	}
 	if op.Spec.Summary == "" {
@@ -59,7 +68,7 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 	}
 
 	// --- Layer 3: Type Inference ---
-	reqType := s.findRequestSchema(funcDecl.Body, s.Config.HandlerPatterns.RequestBody)
+	reqType := s.findRequestSchema(body, s.Config.HandlerPatterns.RequestBody)
 	if reqType != nil {
 		schemaRef := s.SchemaGen.GenerateSchema(reqType)
 		reqBody := openapi3.NewRequestBody().WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
@@ -72,8 +81,8 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 			pathParamNames[p.Value.Name] = true
 		}
 	}
-	queryParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.QueryParameter, "query", pathParamNames)
-	headerParams := s.findParametersByPattern(funcDecl.Body, s.Config.HandlerPatterns.HeaderParameter, "header", nil)
+	queryParams := s.findParametersByPattern(body, s.Config.HandlerPatterns.QueryParameter, "query", pathParamNames)
+	headerParams := s.findParametersByPattern(body, s.Config.HandlerPatterns.HeaderParameter, "header", nil)
 	for _, p := range queryParams {
 		op.Spec.AddParameter(p.Value)
 	}
@@ -81,7 +90,7 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 		op.Spec.AddParameter(p.Value)
 	}
 
-	responses := s.findResponseSchemas(funcDecl.Body, s.Config.HandlerPatterns.ResponseBody)
+	responses := s.findResponseSchemas(body, s.Config.HandlerPatterns.ResponseBody)
 	for statusCode, info := range responses {
 		var schemaRef *openapi3.SchemaRef
 		if info.Type != nil {
@@ -102,7 +111,10 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 	}
 
 	// --- Layer 1: Apply Explicit Overrides ---
-	if metadata, ok := s.OperationMetadata[op.GoHandler]; ok {
+	// Metadata is carried on the operation, not looked up by handler object.
+	// Keying by object meant two routes sharing a handler also shared a single
+	// metadata entry, so whichever builder chain was parsed last won both.
+	if metadata := op.HandlerMetadata; metadata != nil {
 		if metadata.RequestBodyExpr != nil {
 			if tv, ok := s.getInfoForNode(metadata.RequestBodyExpr).Types[metadata.RequestBodyExpr]; ok {
 				schemaRef := s.SchemaGen.GenerateSchema(tv.Type)
@@ -111,28 +123,48 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 			}
 		}
 		for _, respOverride := range metadata.Responses {
-			var schemaRef *openapi3.SchemaRef
-			var description string = http.StatusText(respOverride.Code)
-			// Check if the content is a string literal for description, or a type for a schema
-			if str, isStr := s.resolveStringValue(respOverride.ContentExpr); isStr {
-				description = str
-			} else if tv, ok := s.getInfoForNode(respOverride.ContentExpr).Types[respOverride.ContentExpr]; ok {
-				schemaRef = s.SchemaGen.GenerateSchema(tv.Type)
+			// Description and schema are independent now: a response can carry
+			// both, which the old single `content any` argument could not express.
+			description := respOverride.Description
+			if description == "" {
+				description = http.StatusText(respOverride.Code)
 			}
+			if description == "" {
+				description = "Response"
+			}
+
+			var schemaRef *openapi3.SchemaRef
+			if respOverride.ContentExpr != nil {
+				if info := s.getInfoForNode(respOverride.ContentExpr); info != nil {
+					if tv, ok := info.Types[respOverride.ContentExpr]; ok {
+						schemaRef = s.SchemaGen.GenerateSchema(tv.Type)
+					}
+				}
+			}
+
 			response := openapi3.NewResponse().WithDescription(description)
-			if schemaRef != nil {
+			if schemaRef != nil && respOverride.Code != 204 {
 				response.WithContent(openapi3.NewContentWithJSONSchemaRef(schemaRef))
 			}
 			op.Spec.AddResponse(respOverride.Code, response)
 		}
 		for _, paramOverride := range metadata.Parameters {
-			op.Spec.AddParameter(&openapi3.Parameter{
+			schema := primitiveSchema(paramOverride.Schema)
+			if paramOverride.Example != "" {
+				// The example is written as a string literal so the analyzer can
+				// always resolve it, but it has to be emitted as the parameter's
+				// declared type or validators reject the mismatch.
+				schema.Example = coerceExample(paramOverride.Example, paramOverride.Schema)
+			}
+			// Replace rather than append, so declaring a parameter that was also
+			// inferred refines it instead of duplicating it.
+			replaceParameter(op.Spec, &openapi3.Parameter{
 				In:          paramOverride.In,
 				Name:        paramOverride.Name,
 				Description: paramOverride.Description,
-				Required:    paramOverride.Required,
+				Required:    paramOverride.Required || paramOverride.In == "path",
 				Deprecated:  paramOverride.Deprecated,
-				Schema:      openapi3.NewStringSchema().NewRef(),
+				Schema:      schema.NewRef(),
 			})
 		}
 		for _, headerOverride := range metadata.ResponseHeaders {
@@ -140,9 +172,14 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 				if resp.Value.Headers == nil {
 					resp.Value.Headers = make(map[string]*openapi3.HeaderRef)
 				}
+				// A header without a schema is rejected by strict validators,
+				// including respec's own validate command.
 				resp.Value.Headers[headerOverride.Name] = &openapi3.HeaderRef{
 					Value: &openapi3.Header{
-						Parameter: openapi3.Parameter{Description: headerOverride.Description},
+						Parameter: openapi3.Parameter{
+							Description: headerOverride.Description,
+							Schema:      primitiveSchema(headerOverride.Schema).NewRef(),
+						},
 					},
 				}
 			}
@@ -174,6 +211,54 @@ func (s *State) analyzeHandlerBody(op *model.Operation) {
 	if op.Spec.Responses == nil || len(op.Spec.Responses.Map()) == 0 {
 		op.Spec.AddResponse(200, openapi3.NewResponse().WithDescription("Successful response"))
 	}
+}
+
+// coerceExample converts an example written as a string literal into the value
+// type the parameter declares, so the example matches its own schema.
+func coerceExample(value, schemaType string) any {
+	switch schemaType {
+	case "integer", "int":
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
+		}
+	case "number", "float":
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+	case "boolean", "bool":
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
+		}
+	}
+	return value
+}
+
+// primitiveSchema maps a declared primitive type name onto a schema.
+func primitiveSchema(name string) *openapi3.Schema {
+	switch name {
+	case "integer", "int":
+		return openapi3.NewIntegerSchema()
+	case "number", "float":
+		return openapi3.NewFloat64Schema()
+	case "boolean", "bool":
+		return openapi3.NewBoolSchema()
+	case "array":
+		return openapi3.NewArraySchema()
+	default:
+		return openapi3.NewStringSchema()
+	}
+}
+
+// replaceParameter sets a parameter, overwriting an inferred one with the same
+// name and location rather than adding a duplicate.
+func replaceParameter(op *openapi3.Operation, param *openapi3.Parameter) {
+	for i, existing := range op.Parameters {
+		if existing.Value != nil && existing.Value.Name == param.Name && existing.Value.In == param.In {
+			op.Parameters[i] = &openapi3.ParameterRef{Value: param}
+			return
+		}
+	}
+	op.AddParameter(param)
 }
 
 // findParametersByPattern finds parameters based on a given pattern.

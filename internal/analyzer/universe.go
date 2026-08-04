@@ -1,7 +1,6 @@
 package analyzer
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -11,8 +10,6 @@ import (
 // It scans all files in all packages to build a map of every top-level
 // function and constant declaration.
 func (s *State) discoverUniverse() {
-	fmt.Println("Phase 2: Discovering project universe (functions and constants)...")
-
 	for _, pkg := range s.pkgs {
 		for _, file := range pkg.Syntax {
 			// Set the current file context for the type info lookup
@@ -37,7 +34,6 @@ func (s *State) discoverUniverse() {
 			}
 		}
 	}
-	fmt.Printf("  [Info] Discovered %d functions and %d constants.\n", len(s.Universe.Functions), len(s.Universe.Constants))
 }
 
 // registerFunction records a function declaration in the universe map.

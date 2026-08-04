@@ -1,0 +1,13 @@
+info:
+  title: "Response Inference Fixture"
+  version: "1.0.0"
+
+securitySchemes:
+  ApiKeyAuth:
+    type: apiKey
+    in: header
+    name: X-API-Key
+  BearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT

@@ -2,10 +2,9 @@ package analyzer
 
 import (
 	"go/ast"
-	"strconv"
 
-	"github.com/Zachacious/go-respec/internal/model" // Import the model package
-	"github.com/Zachacious/go-respec/respec"
+	"github.com/Zachacious/go-respec/internal/meta"
+	"github.com/Zachacious/go-respec/internal/model"
 )
 
 // FindGroupMetadata scans the project for `respec.Meta(r)` calls and builds a
@@ -47,8 +46,8 @@ func (s *State) FindGroupMetadata() {
 }
 
 // parseMetaChain walks a chain of calls like `respec.Meta(...).Tag(...).Security(...)` backwards.
-func (s *State) parseMetaChain(endCall *ast.CallExpr) (*ast.CallExpr, *respec.GroupBuilder) {
-	builder := respec.NewGroupBuilder()
+func (s *State) parseMetaChain(endCall *ast.CallExpr) (*ast.CallExpr, *meta.GroupMetadata) {
+	group := &meta.GroupMetadata{}
 	currentCall := endCall
 
 	for {
@@ -57,22 +56,29 @@ func (s *State) parseMetaChain(endCall *ast.CallExpr) (*ast.CallExpr, *respec.Gr
 			break
 		}
 
-		methodName := selExpr.Sel.Name
 		var argValues []string
 		for _, arg := range currentCall.Args {
-			if lit, ok := arg.(*ast.BasicLit); ok {
-				if val, err := strconv.Unquote(lit.Value); err == nil {
-					argValues = append(argValues, val)
-				}
+			if val, ok := s.resolveStringValue(arg); ok {
+				argValues = append(argValues, val)
 			}
 		}
 
-		switch methodName {
+		switch selExpr.Sel.Name {
 		case "Tag":
-			builder.Tag(argValues...)
+			group.Tags = append(group.Tags, argValues...)
 		case "Security":
-			if len(argValues) > 0 {
-				builder.Security(argValues[0])
+			// Every argument counts. Reading only the first silently dropped
+			// the rest of a multi-scheme requirement.
+			group.Security = append(group.Security, argValues...)
+		case "Public":
+			group.NoSecurity = true
+		case "Deprecated":
+			group.Deprecated = true
+		case "Deprecate":
+			if len(currentCall.Args) > 0 {
+				if val, ok := getBoolValue(currentCall.Args[0]); ok {
+					group.Deprecated = val
+				}
 			}
 		}
 
@@ -88,5 +94,5 @@ func (s *State) parseMetaChain(endCall *ast.CallExpr) (*ast.CallExpr, *respec.Gr
 		return nil, nil
 	}
 
-	return currentCall, builder
+	return currentCall, group
 }
